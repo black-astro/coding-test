@@ -9,6 +9,7 @@
 
 import random
 import string
+import bisect
 
 # stdin 형: examples/testcases = {"input","output"}
 # func  형: examples = {"args","output"}, testcases = {"args","expected"}
@@ -91,6 +92,80 @@ def _mult_table(rng):
     return {"examples": ex, "testcases": cases}
 
 
+def _find_numbers(rng):
+    cases = []
+    for _ in range(3):
+        n = rng.randint(3, 7)
+        A = [rng.randint(-20, 20) for _ in range(n)]
+        m = rng.randint(2, 5)
+        q = [rng.choice(A + [rng.randint(-20, 20)]) for _ in range(m)]
+        S = set(A)
+        out = " ".join("1" if x in S else "0" for x in q) + "\n"
+        inp = f"{n}\n{' '.join(map(str, A))}\n{m}\n{' '.join(map(str, q))}\n"
+        cases.append({"input": inp, "output": out})
+    return {"examples": cases[:1], "testcases": cases}
+
+
+def _make_one(rng):
+    def f(n):
+        dp = [0] * (n + 1)
+        for i in range(2, n + 1):
+            dp[i] = dp[i - 1] + 1
+            if i % 2 == 0:
+                dp[i] = min(dp[i], dp[i // 2] + 1)
+            if i % 3 == 0:
+                dp[i] = min(dp[i], dp[i // 3] + 1)
+        return dp[n]
+    cases = [{"args": [n], "expected": f(n)} for n in (rng.randint(2, 1000) for _ in range(4))]
+    ex = [{"args": c["args"], "output": c["expected"]} for c in cases[:2]]
+    return {"examples": ex, "testcases": cases}
+
+
+def _lis(rng):
+    def f(nums):
+        tails = []
+        for x in nums:
+            i = bisect.bisect_left(tails, x)
+            if i == len(tails):
+                tails.append(x)
+            else:
+                tails[i] = x
+        return len(tails)
+    cases = []
+    for _ in range(4):
+        nums = [rng.randint(1, 50) for _ in range(rng.randint(3, 10))]
+        cases.append({"args": [nums], "expected": f(nums)})
+    ex = [{"args": c["args"], "output": c["expected"]} for c in cases[:2]]
+    return {"examples": ex, "testcases": cases}
+
+
+def _two_sum(rng):
+    def f(nums, target):
+        s = sorted(nums)
+        l, r = 0, len(s) - 1
+        while l < r:
+            t = s[l] + s[r]
+            if t == target:
+                return True
+            elif t < target:
+                l += 1
+            else:
+                r -= 1
+        return False
+    cases = []
+    for _ in range(4):
+        n = rng.randint(2, 8)
+        nums = [rng.randint(-20, 20) for _ in range(n)]
+        if rng.random() < 0.6:
+            i, j = rng.sample(range(n), 2)
+            target = nums[i] + nums[j]
+        else:
+            target = rng.randint(-40, 40)
+        cases.append({"args": [nums, target], "expected": f(nums, target)})
+    ex = [{"args": c["args"], "output": c["expected"]} for c in cases[:2]]
+    return {"examples": ex, "testcases": cases}
+
+
 GENERATORS = {
     "bronze-01": _ab,
     "bronze-02": _stars,
@@ -100,6 +175,10 @@ GENERATORS = {
     "bronze-28": _gugudan,
     "bronze-29": _mult_table,
     "silver-01": _sort_numbers,
+    "silver-03": _find_numbers,
+    "gold-01": _make_one,
+    "gold-04": _lis,
+    "gold-05": _two_sum,
 }
 
 

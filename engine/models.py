@@ -47,6 +47,7 @@ class Problem:
     reference_py: str = ""
     reference_java: str = ""
     reference_cpp: str = ""
+    reference_js: str = ""
 
     # --- 풀이 템플릿 (solutions/ 에 자동 생성될 시작 코드) ---
     template_py: str = ""

@@ -506,7 +506,8 @@ class MainWindow(QMainWindow):
             "SegL": "border-top-left-radius:8px;border-bottom-left-radius:8px;",
             "SegR": "border-top-right-radius:8px;border-bottom-right-radius:8px;",
         }
-        for label, code, edge in [("Python", "python", "SegL"), ("Java", "java", ""), ("C++", "cpp", "SegR")]:
+        for label, code, edge in [("Python", "python", "SegL"), ("Java", "java", ""),
+                                  ("C++", "cpp", ""), ("JS", "javascript", "SegR")]:
             b = QPushButton(label)
             b.setObjectName("Seg")          # 배경/hover/checked 스타일
             b.setCheckable(True)
@@ -853,12 +854,13 @@ class MainWindow(QMainWindow):
         self._cur_active = None
         self._render_lesson(les)
         self.out.clear()
-        lang = les.lang if les.lang in ("python", "java", "cpp") else "python"
+        ext_map = {"python": "py", "java": "java", "cpp": "cpp", "javascript": "js",
+                   "css": "css", "scss": "scss"}
+        lang = les.lang if les.lang in ext_map else "python"
         self.lang = lang
         self._sync_lang_buttons()
-        self.editor.set_code(les.code or "", lang)
-        ext = {"python": "py", "java": "java", "cpp": "cpp"}[lang]
-        self.file_label.setText(f"{les.id}.{ext}")
+        self.editor.set_code(les.code or "", lang if lang in ("python", "java", "cpp", "javascript") else "python")
+        self.file_label.setText(f"{les.id}.{ext_map[lang]}")
         if les.lang == "guide" or not les.code:
             self._set_status("가이드 · 읽기", COMMENT)
         else:
@@ -896,9 +898,31 @@ class MainWindow(QMainWindow):
 
     def _run_lesson(self):
         l = self.current_lesson
-        if l is None or l.lang not in ("python", "java", "cpp") or not self.editor.toPlainText().strip():
+        if l is None or not self.editor.toPlainText().strip():
             self.out.clear()
             self._append("이 항목은 읽기 전용입니다(실행할 코드가 없어요).\n", COMMENT)
+            return
+        # CSS: 그대로 보여줌 / SCSS: CSS 로 컴파일해서 보여줌
+        if l.lang == "css":
+            self.out.clear()
+            self._append("/* CSS — 그대로 적용되는 스타일 */\n", COMMENT)
+            self._append(self.editor.toPlainText() + "\n", FG)
+            self._set_status("css", GREEN)
+            return
+        if l.lang == "scss":
+            self.out.clear()
+            self._append("$ sass  (SCSS → CSS)\n", CYAN)
+            ok, css, err = runner.run_scss(self.editor.toPlainText())
+            if ok:
+                self._append(css + "\n", FG)
+                self._set_status("compiled", GREEN)
+            else:
+                self._append((err or "컴파일 실패") + "\n", RED)
+                self._set_status("error", RED)
+            return
+        if l.lang not in ("python", "java", "cpp", "javascript"):
+            self.out.clear()
+            self._append("실행할 수 없는 항목입니다.\n", COMMENT)
             return
         lang = self.lang
         if not runner.compiler_available(lang):
@@ -1065,6 +1089,11 @@ class MainWindow(QMainWindow):
                     "    ios_base::sync_with_stdio(false);\n    cin.tie(nullptr);\n"
                     "    // TODO: 표준입력을 읽고 정답을 표준출력으로 출력하세요.\n"
                     "    return 0;\n}\n")
+        if lang == "javascript":
+            return ("// 표준입력 전체 읽기 (Node.js)\n"
+                    "const data = require('fs').readFileSync(0, 'utf8').trim();\n"
+                    "const lines = data.split('\\n');\n"
+                    "// TODO: lines 로 입력을 읽고 console.log 로 출력하세요.\n")
         return ""
 
     def _load_editor(self):
@@ -1097,7 +1126,7 @@ class MainWindow(QMainWindow):
         # 위장: 랭크 이니셜/티어 + 주제만. 출처(style)·BOJ·'코딩테스트' 단어 제거
         meta = [p.tier or RANK_INITIAL.get(p.rank, p.rank), p.topic]
         io = "stdin · stdout" if p.type == "stdin" else f"fn {p.func_name}()"
-        langs = "py · java · cpp" if p.type == "stdin" else "py"
+        langs = "py · java · cpp · js" if p.type == "stdin" else "py"
 
         def sec(title):
             return f"<div style='color:{CYAN};font-size:13px;font-weight:bold;margin:14px 0 4px;'>{title}</div>"
@@ -1207,7 +1236,9 @@ class MainWindow(QMainWindow):
             return
         p = self.current
         lang = self.lang
-        code = {"python": p.reference_py, "java": p.reference_java, "cpp": p.reference_cpp}[lang]
+        refmap = {"python": p.reference_py, "java": p.reference_java,
+                  "cpp": p.reference_cpp, "javascript": p.reference_js}
+        code = refmap.get(lang, "")
         if not code.strip():                      # 현재 언어 정답이 없으면 정석(파이썬) 코드로
             lang, code = "python", p.reference_py
         dlg = QMainWindow(self)

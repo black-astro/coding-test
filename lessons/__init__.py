@@ -9,8 +9,9 @@ import importlib
 import pkgutil
 from pathlib import Path
 
-LANGS = ["python", "java", "cpp"]
-LANG_KR = {"python": "Python", "java": "Java", "cpp": "C++"}
+LANGS = ["python", "java", "cpp", "javascript", "css", "scss"]
+LANG_KR = {"python": "Python", "java": "Java", "cpp": "C++",
+           "javascript": "JavaScript", "css": "CSS", "scss": "SCSS"}
 LEVELS = ["기초", "중급", "고급"]
 
 # content/ 폴더의 모듈 (동결 환경 대비 fallback)
@@ -19,6 +20,7 @@ _CONTENT_MODULES = [
     "py_basic", "py_mid", "py_adv",
     "java_basic", "java_mid", "java_adv",
     "cpp_basic", "cpp_mid", "cpp_adv",
+    "js_lessons", "css_lessons", "scss_lessons",
 ]
 
 ALL = {lang: {lv: [] for lv in LEVELS} for lang in LANGS}

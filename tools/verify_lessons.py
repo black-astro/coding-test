@@ -23,7 +23,7 @@ spec = importlib.util.spec_from_file_location("lessonmod", path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
-FN = {"python": "sol.py", "java": "Main.java", "cpp": "main.cpp"}
+FN = {"python": "sol.py", "java": "Main.java", "cpp": "main.cpp", "javascript": "solution.js"}
 fail = 0
 ran = 0
 print(f"검증: {path.name}  (레슨 {len(getattr(mod, 'LESSONS', []))}개)")

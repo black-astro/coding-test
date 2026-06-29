@@ -108,9 +108,13 @@ def run_process(cmd, stdin_text: str, timeout_s: float, cwd=None) -> RunResult:
 # ───────────────────────── 언어 지원 ─────────────────────────
 
 LANGUAGES = {
-    "python": {"name": "Python", "ext": ".py", "filename": "solution.py"},
-    "java":   {"name": "Java",   "ext": ".java", "filename": "Main.java"},
-    "cpp":    {"name": "C++",    "ext": ".cpp", "filename": "main.cpp"},
+    "python":     {"name": "Python",     "ext": ".py",   "filename": "solution.py"},
+    "java":       {"name": "Java",       "ext": ".java", "filename": "Main.java"},
+    "cpp":        {"name": "C++",        "ext": ".cpp",  "filename": "main.cpp"},
+    "javascript": {"name": "JavaScript", "ext": ".js",   "filename": "solution.js"},
+    # 웹(학습 전용) — 채점이 아니라 컴파일/렌더 결과를 보여줌
+    "css":        {"name": "CSS",        "ext": ".css",  "filename": "style.css"},
+    "scss":       {"name": "SCSS",       "ext": ".scss", "filename": "style.scss"},
 }
 
 
@@ -172,6 +176,16 @@ def compiler_available(lang: str) -> bool:
         return javac is not None and java is not None
     if lang == "cpp":
         return any(shutil.which(c) for c in ("g++", "clang++"))
+    if lang == "javascript":
+        return shutil.which("node") is not None
+    if lang == "scss":
+        try:
+            import sass  # noqa
+            return True
+        except ImportError:
+            return shutil.which("sass") is not None
+    if lang == "css":
+        return True
     return False
 
 
@@ -237,4 +251,42 @@ def compile_solution(lang: str, source_path: Path) -> CompileResult:
             return CompileResult(False, None, proc.stderr.strip(), workdir)
         return CompileResult(True, [str(exe)], "", workdir)
 
+    if lang == "javascript":
+        node = shutil.which("node")
+        if not node:
+            return CompileResult(False, None, "Node.js(node)가 설치되어 있지 않습니다.", None)
+        return CompileResult(True, [node, str(source_path)], "", source_path.parent)
+
     return CompileResult(False, None, f"지원하지 않는 언어: {lang}", None)
+
+
+def run_scss(source_text: str):
+    """SCSS 소스를 CSS 로 컴파일해 (ok, css, error) 반환. libsass(파이썬) 우선."""
+    try:
+        import sass  # libsass
+        css = sass.compile(string=source_text, output_style="expanded")
+        return True, css, ""
+    except ImportError:
+        pass
+    except Exception as e:  # 컴파일 에러
+        return False, "", str(e)
+    # 폴백: 시스템 sass 풀패스
+    exe = shutil.which("sass")
+    if exe:
+        try:
+            proc = subprocess.run([exe, "--stdin", "--no-source-map"],
+                                  input=source_text, capture_output=True, text=True, timeout=40)
+            if proc.returncode != 0:
+                return False, "", (proc.stderr or "컴파일 실패").strip()
+            return True, proc.stdout, ""
+        except Exception as e:  # noqa
+            return False, "", str(e)
+    return False, "", "SCSS 컴파일러가 없습니다. (pip install libsass)"
+
+
+def scss_available() -> bool:
+    try:
+        import sass  # noqa
+        return True
+    except ImportError:
+        return shutil.which("sass") is not None
