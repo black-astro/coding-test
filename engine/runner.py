@@ -1,0 +1,240 @@
+"""다국어 실행/측정 엔진.
+
+- 프로세스를 실행하며 **실행 시간(ms)** 과 **최대 메모리(KB)** 를 측정한다.
+- Windows 에서는 psapi.GetProcessMemoryInfo 로 PeakWorkingSetSize 를 읽는다.
+- 시간 초과 시 프로세스를 강제 종료한다.
+
+언어별 컴파일/실행 명령을 제공한다. (python / java / cpp)
+"""
+
+import os
+import sys
+import time
+import shutil
+import subprocess
+from pathlib import Path
+from dataclasses import dataclass
+
+IS_WINDOWS = (os.name == "nt")
+
+ENGINE_DIR = Path(__file__).resolve().parent
+FUNC_HARNESS = ENGINE_DIR / "_func_harness.py"
+
+
+# ───────────────────────── 메모리 측정 (Windows) ─────────────────────────
+
+if IS_WINDOWS:
+    import ctypes
+    from ctypes import wintypes
+
+    class _PMC(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    def _peak_working_set_kb(handle) -> int | None:
+        try:
+            c = _PMC()
+            c.cb = ctypes.sizeof(c)
+            ok = ctypes.windll.psapi.GetProcessMemoryInfo(
+                wintypes.HANDLE(int(handle)), ctypes.byref(c), c.cb
+            )
+            return (c.PeakWorkingSetSize // 1024) if ok else None
+        except Exception:
+            return None
+else:
+    def _peak_working_set_kb(handle) -> int | None:
+        return None
+
+
+# ───────────────────────── 실행 결과 ─────────────────────────
+
+@dataclass
+class RunResult:
+    stdout: str
+    stderr: str
+    returncode: int
+    time_ms: float
+    peak_mem_kb: int | None
+    timed_out: bool
+
+
+def run_process(cmd, stdin_text: str, timeout_s: float, cwd=None) -> RunResult:
+    """명령을 실행하고 시간·메모리를 측정한다."""
+    t0 = time.perf_counter()
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=cwd,
+    )
+    timed_out = False
+    try:
+        out, err = proc.communicate(input=stdin_text, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        proc.kill()
+        out, err = proc.communicate()
+    t1 = time.perf_counter()
+
+    peak = None
+    try:
+        if IS_WINDOWS and getattr(proc, "_handle", None) is not None:
+            peak = _peak_working_set_kb(proc._handle)
+    except Exception:
+        peak = None
+
+    return RunResult(
+        stdout=out or "",
+        stderr=err or "",
+        returncode=proc.returncode if proc.returncode is not None else -1,
+        time_ms=(t1 - t0) * 1000.0,
+        peak_mem_kb=peak,
+        timed_out=timed_out,
+    )
+
+
+# ───────────────────────── 언어 지원 ─────────────────────────
+
+LANGUAGES = {
+    "python": {"name": "Python", "ext": ".py", "filename": "solution.py"},
+    "java":   {"name": "Java",   "ext": ".java", "filename": "Main.java"},
+    "cpp":    {"name": "C++",    "ext": ".cpp", "filename": "main.cpp"},
+}
+
+
+def _app_base() -> Path:
+    """배포 시 실행 파일이 있는 폴더(번들 toolchain 의 기준 경로)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent      # 프로젝트 루트(codeTest/)
+
+
+def _bundled(*relparts) -> Path | None:
+    """codeTest/runtime/<...> 또는 실행파일 옆 runtime/<...> 가 있으면 그 경로."""
+    p = _app_base().joinpath("runtime", *relparts)
+    return p if p.exists() else None
+
+
+def python_exe() -> str:
+    """Python 풀이 실행에 쓸 인터프리터.
+
+    PyInstaller 로 빌드하면 sys.executable 이 앱 exe 가 되므로,
+    번들된 파이썬(runtime/python/python.exe)을 우선 사용한다.
+    """
+    cand = "python.exe" if IS_WINDOWS else "bin/python3"
+    bp = _bundled("python", cand)
+    if bp:
+        return str(bp)
+    return sys.executable
+
+
+def _java_tools():
+    """javac/java 절대 경로. 번들 JDK(runtime/jdk) → 시스템 PATH 순으로 찾는다.
+
+    (Windows PATH 에 깨진 구버전 JRE 의 java.exe 가 먼저 잡히는 문제도 피한다.)
+    """
+    ext = ".exe" if IS_WINDOWS else ""
+    # 1) 번들된 JDK 우선 (무설치 배포)
+    bj = _bundled("jdk", "bin", "javac" + ext)
+    if bj:
+        java = bj.with_name("java" + ext)
+        if java.exists():
+            return str(bj), str(java)
+    # 2) 시스템 PATH
+    javac = shutil.which("javac")
+    if not javac:
+        return None, None
+    p = Path(javac)
+    java = p.with_name("java" + ext) if IS_WINDOWS else p.with_name("java")
+    if not java.exists():
+        fallback = shutil.which("java")
+        java = Path(fallback) if fallback else None
+    return str(javac), (str(java) if java else None)
+
+
+def compiler_available(lang: str) -> bool:
+    if lang == "python":
+        return True
+    if lang == "java":
+        javac, java = _java_tools()
+        return javac is not None and java is not None
+    if lang == "cpp":
+        return any(shutil.which(c) for c in ("g++", "clang++"))
+    return False
+
+
+def _cpp_compiler() -> str | None:
+    ext = ".exe" if IS_WINDOWS else ""
+    # 1) 번들된 MinGW(g++) 우선 (무설치 배포)
+    bg = _bundled("mingw", "bin", "g++" + ext)
+    if bg:
+        return str(bg)
+    # 2) 시스템 PATH
+    for c in ("g++", "clang++"):
+        found = shutil.which(c)
+        if found:
+            return found
+    return None
+
+
+@dataclass
+class CompileResult:
+    ok: bool
+    run_cmd: list | None      # 실행 명령
+    error: str                # 컴파일 에러 메시지(있으면)
+    workdir: Path | None
+
+
+def compile_solution(lang: str, source_path: Path) -> CompileResult:
+    """필요 시 컴파일하고 실행 명령을 돌려준다. python 은 컴파일 없음."""
+    # 실행 시 cwd 를 바꾸므로 항상 절대 경로로 고정한다.
+    source_path = Path(source_path).resolve()
+    if lang == "python":
+        return CompileResult(True, [python_exe(), str(source_path)], "", source_path.parent)
+
+    if lang == "java":
+        javac, java = _java_tools()
+        if not javac or not java:
+            return CompileResult(False, None, "JDK(javac/java)를 찾을 수 없습니다.", None)
+        workdir = source_path.parent
+        # 자바는 public class Main 필요 → 파일명도 Main.java 여야 함
+        main_java = workdir / "Main.java"
+        if source_path.name != "Main.java":
+            shutil.copyfile(source_path, main_java)
+        proc = subprocess.run(
+            [javac, "-encoding", "UTF-8", str(main_java)],
+            capture_output=True, text=True, cwd=workdir,
+        )
+        if proc.returncode != 0:
+            return CompileResult(False, None, proc.stderr.strip(), workdir)
+        return CompileResult(True, [java, "-cp", str(workdir), "Main"], "", workdir)
+
+    if lang == "cpp":
+        comp = _cpp_compiler()
+        if not comp:
+            return CompileResult(False, None,
+                                 "C++ 컴파일러(g++/clang++)가 설치되어 있지 않습니다.", None)
+        workdir = source_path.parent
+        exe = workdir / ("prog.exe" if IS_WINDOWS else "prog")
+        # -static: 번들 MinGW 의 DLL 없이도 실행되도록 정적 링크(무설치 배포 대비)
+        proc = subprocess.run(
+            [comp, "-O2", "-std=c++17", "-static", "-o", str(exe), str(source_path)],
+            capture_output=True, text=True, cwd=workdir,
+        )
+        if proc.returncode != 0:
+            return CompileResult(False, None, proc.stderr.strip(), workdir)
+        return CompileResult(True, [str(exe)], "", workdir)
+
+    return CompileResult(False, None, f"지원하지 않는 언어: {lang}", None)

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+solutions/
+dist/
+build/
+runtime/
+*.spec
+.idea/
+.vscode/
+.DS_Store
