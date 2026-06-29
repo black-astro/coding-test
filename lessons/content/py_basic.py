@@ -122,4 +122,74 @@ LESSONS = [
             "print(s, 2 in s)          # {1,2,3} True\n"
         ),
     ),
+
+    Lesson(
+        id="py-basic-06-func",
+        lang="python", level="기초",
+        title="함수 정의와 반환",
+        summary="def · return · 기본 인자",
+        explanation=(
+            "def 이름(매개변수): 으로 함수를 정의하고 return 으로 값을 돌려준다.\n"
+            "return 이 없으면 None 을 반환한다. 기본값 인자(def f(x, y=10))로 호출을 간단히 한다.\n"
+            "여러 값을 return a, b 로 묶어 반환하면 튜플로 받는다."
+        ),
+        usage="반복되는 로직을 묶어 재사용. 코딩테스트에서 DFS/재귀를 함수로 분리하면 깔끔하다.",
+        cons="기본값 인자에 리스트 같은 가변 객체를 쓰면 호출 간 공유되는 함정이 있다(def f(a=[]) 금지).",
+        code=(
+            "def add(a, b=10):\n"
+            "    return a + b\n"
+            "def minmax(arr):\n"
+            "    return min(arr), max(arr)\n"
+            "print(add(5))         # 15 (기본값 b=10)\n"
+            "print(add(5, 20))     # 25\n"
+            "lo, hi = minmax([3, 9, 1])\n"
+            "print(lo, hi)         # 1 9\n"
+        ),
+    ),
+
+    Lesson(
+        id="py-basic-07-str",
+        lang="python", level="기초",
+        title="문자열 다루기",
+        summary="인덱싱 · 슬라이싱 · 주요 메서드",
+        explanation=(
+            "문자열은 불변(immutable) 시퀀스다. s[i] 인덱싱, s[i:j] 슬라이싱, s[::-1] 뒤집기.\n"
+            "주요 메서드: upper/lower, strip(공백제거), split(나누기), join(합치기),\n"
+            "replace(치환), find/index(위치), startswith/endswith, count."
+        ),
+        usage="입력 파싱(split), 출력 조립(join), 문자열 규칙 처리 문제에 필수.",
+        cons="불변이라 한 글자씩 += 로 이어붙이면 O(n^2)로 느리다 → 리스트에 모아 ''.join() 권장.",
+        code=(
+            "s = '  Hello, World  '\n"
+            "print(s.strip())              # 'Hello, World'\n"
+            "print(s.strip().upper())      # 'HELLO, WORLD'\n"
+            "print('a,b,c'.split(','))     # ['a','b','c']\n"
+            "print('-'.join(['2024','01','15']))  # '2024-01-15'\n"
+            "print('banana'.count('a'), 'banana'.replace('a','*'))\n"
+        ),
+    ),
+
+    Lesson(
+        id="py-basic-08-tuple",
+        lang="python", level="기초",
+        title="튜플과 언패킹",
+        summary="불변 묶음 · 다중 대입 · swap",
+        explanation=(
+            "튜플 (a, b) 은 불변 묶음이다. 여러 값을 한 번에 대입(언패킹)할 때 유용하다.\n"
+            "a, b = b, a 로 임시변수 없이 교환하고, x, y = map(int, input().split()) 처럼 입력에도 쓴다.\n"
+            "딕셔너리 키나 좌표처럼 '바뀌면 안 되는 묶음'에 적합하다."
+        ),
+        usage="좌표 (x, y), 다중 반환값 받기, 한 번에 여러 변수 초기화에 자주 쓴다.",
+        cons="불변이라 원소 변경 불가(변경이 필요하면 리스트). 원소 1개 튜플은 (x,) 처럼 콤마 필요.",
+        code=(
+            "point = (3, 5)\n"
+            "x, y = point          # 언패킹\n"
+            "print(x, y)           # 3 5\n"
+            "a, b = 1, 2\n"
+            "a, b = b, a           # 임시변수 없이 swap\n"
+            "print(a, b)           # 2 1\n"
+            "nums = tuple([1, 2, 3])\n"
+            "print(nums, len(nums))\n"
+        ),
+    ),
 ]
