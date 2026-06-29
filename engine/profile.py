@@ -65,14 +65,17 @@ def compute(solved_ids: set, all_problems) -> dict:
 
     if cur:
         n, tot = solved[cur], (total[cur] or 1)
-        idx = min(4, int(n / tot * 5))         # 0..4  (적게 풀수록 5, 많이 풀수록 1)
+        band = (n / tot) * 5
+        idx = min(4, int(band))                # 0..4  (적게 풀수록 5, 많이 풀수록 1)
         num = 5 - idx                          # 5..1  (B5 가장 낮고 B1 가장 높음)
         letter = cur[0]                        # B/S/G/P
         code = f"{letter}{num}"                # 예: G4
         tier_kr = f"{RANK_KR[cur]} {num}"
         emoji = RANK_EMOJI[cur]
+        progress = max(0, min(100, int(round((band - idx) * 100))))   # 현재 세부티어 내 진행률
     else:
         code, tier_kr, emoji = "—", "랭크 없음", "▫"
+        progress = min(100, int(solved["Bronze"] / max(1, GATE["Bronze"]) * 100))
 
     # 다음 목표 안내 (점수/문제 수 둘 다 고려)
     next_goal = None
@@ -102,6 +105,8 @@ def compute(solved_ids: set, all_problems) -> dict:
         "code": code,            # B5~P1
         "tier_kr": tier_kr,
         "emoji": emoji,
+        "progress": progress,    # 현재 세부 티어 내 진행률 0~100
+        "rank_order": RANK_ORDER,
         "solved": dict(solved),
         "total": dict(total),
         "rating_gate": RATING_GATE,

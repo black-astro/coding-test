@@ -65,6 +65,21 @@ class Problem:
     # 예: "구현/시뮬레이션", "DFS/BFS", "그리디", "DP" ...
     category: str = ""
 
+    # --- 출제율(시험 출제 가중치) 1~5, 클수록 자주 출제 ---
+    freq: int = 3
+
+
+@dataclass
+class Word:
+    """영단어 학습 한 항목 (개발자 은어/IT 용어 + 일반 영어)."""
+    word: str
+    meaning: str            # 한글 뜻
+    level: str              # "기초" | "중급" | "고급"
+    category: str = "일반"  # "일반" | "IT"
+    pos: str = ""           # 품사 (n/v/adj/adv 등)
+    example: str = ""       # 영어 예문
+    example_kr: str = ""    # 예문 해석
+
 
 @dataclass
 class Lesson:

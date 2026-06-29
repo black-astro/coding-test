@@ -90,7 +90,7 @@ for _r in RANKS:
 # C++ 정답 코드 적용 (problems/cpp/*.py 의 CPP 맵)
 _cpp_dir = Path(__file__).parent / "cpp"
 CPP = {}
-for _name in _submodules(_cpp_dir, ["bronze", "silver", "gold", "platinum"]):
+for _name in _submodules(_cpp_dir, ["bronze", "silver", "gold", "platinum", "gap"]):
     try:
         _m = importlib.import_module(f"problems.cpp.{_name}")
     except ModuleNotFoundError:

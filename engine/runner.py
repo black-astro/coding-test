@@ -144,6 +144,28 @@ def python_exe() -> str:
     return sys.executable
 
 
+def python_cmd(source_path):
+    """Python 스크립트 실행 명령. 빌드(frozen) 시엔 exe 자신을 인터프리터로 사용."""
+    cand = "python.exe" if IS_WINDOWS else "bin/python3"
+    bp = _bundled("python", cand)
+    if bp:
+        return [str(bp), str(source_path)]
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--exec-py", str(source_path)]
+    return [sys.executable, str(source_path)]
+
+
+def func_cmd(harness, source_path, args_path, func_name):
+    """함수형 하니스 실행 명령. frozen 시엔 exe 자신이 하니스를 대신 수행."""
+    cand = "python.exe" if IS_WINDOWS else "bin/python3"
+    bp = _bundled("python", cand)
+    if bp:
+        return [str(bp), str(harness), str(source_path), str(args_path), func_name]
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--func", str(source_path), str(args_path), func_name]
+    return [sys.executable, str(harness), str(source_path), str(args_path), func_name]
+
+
 def _java_tools():
     """javac/java 절대 경로. 번들 JDK(runtime/jdk) → 시스템 PATH 순으로 찾는다.
 
@@ -216,7 +238,7 @@ def compile_solution(lang: str, source_path: Path) -> CompileResult:
     # 실행 시 cwd 를 바꾸므로 항상 절대 경로로 고정한다.
     source_path = Path(source_path).resolve()
     if lang == "python":
-        return CompileResult(True, [python_exe(), str(source_path)], "", source_path.parent)
+        return CompileResult(True, python_cmd(source_path), "", source_path.parent)
 
     if lang == "java":
         javac, java = _java_tools()

@@ -19,11 +19,12 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, Signal, QThread, QTimer
 from PySide6.QtGui import (QColor, QFont, QPainter, QTextCharFormat, QTextCursor,
                            QSyntaxHighlighter, QTextFormat, QTextOption, QAction,
-                           QKeySequence, QShortcut, QIcon, QPixmap)
+                           QKeySequence, QShortcut, QIcon, QPixmap, QCursor)
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
                                QPushButton, QButtonGroup, QHBoxLayout, QVBoxLayout,
                                QSplitter, QTreeWidget, QTreeWidgetItem, QTextBrowser,
-                               QTextEdit, QPlainTextEdit, QSizePolicy, QMenu, QMessageBox)
+                               QTextEdit, QPlainTextEdit, QSizePolicy, QMenu, QMessageBox,
+                               QDialog, QProgressBar)
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -31,6 +32,8 @@ sys.path.insert(0, str(ROOT))
 import problems
 import practice
 import lessons
+import vocab
+from vocab.progress import VocabDB
 from engine.judge import judge as judge_problem, VERDICT_KR
 from engine import runner, profile, topics, variants, exam
 from engine.runner import compile_solution, run_process
@@ -62,9 +65,12 @@ GREEN_D = "#3fb866"
 ORANGE  = "#ffb86c"
 PINK    = "#ff79c6"
 PURPLE  = "#bd93f9"
+PURPLE_D = "#9d6fe0"
 RED     = "#ff5555"
 YELLOW  = "#f1fa8c"
 BORDER  = "#34374a"   # 카드 테두리(은은하게)
+CARD    = "#1e2029"   # 카드(패널) 배경 — 어두운색
+GAP     = "#15161c"   # 카드 사이 여백/구분선(가터)
 
 CODE_FAMILY = "Cascadia Code"
 MONO_FAMILY = "Consolas"
@@ -72,7 +78,7 @@ MONO_FAMILY = "Consolas"
 # ─────────────────────────────────────────────────────────────────
 #  테마 커스터마이즈 — 여기 값만 바꾸면 프로그램 헤더 색이 바뀐다.
 # ─────────────────────────────────────────────────────────────────
-HEADER_BG    = BG2      # 앱 상단 바 배경색 = VSCode 타이틀바 색(#21222c).  예) PURPLE, "#2a2440" …
+HEADER_BG    = CARD     # 헤더 = 카드 배경색과 동일
 HEADER_FG    = FG       # 헤더 글자색(브랜드 'code')
 BADGE_BG     = PINK     # 'T' 뱃지 배경색
 CAPTION_COLOR = HEADER_BG  # Windows 네이티브 타이틀바 색 (Win11 22000+ 에서 정확히 적용)
@@ -87,12 +93,15 @@ VERDICT_TXT = {"AC": "PASS", "WA": "FAIL", "TLE": "TIMEOUT",
 
 QSS = f"""
 * {{ font-family: 'Segoe UI'; color: {FG}; }}
-QMainWindow, QWidget {{ background: {BG}; }}
+QMainWindow, QWidget {{ background: {CARD}; }}
+QSplitter {{ background: {CARD}; }}
 #TitleBar {{ background: {HEADER_BG}; }}
-#Panel {{ background: {BG2}; border-radius: 10px; border:1px solid {BORDER}; }}
-#PanelBG {{ background: {BG}; border-radius: 10px; border:1px solid {BORDER}; }}
-#Rank {{ color:{FG}; font-size:12px; font-weight:bold; background:{BG}; border:1px solid {BORDER};
-         border-radius:7px; padding:3px 10px; }}
+#Panel {{ background: {CARD}; border-radius: 8px; }}
+#PanelBG {{ background: {CARD}; border-radius: 8px; }}
+#Body {{ background: {GAP}; }}
+#Rank {{ color:{FG}; font-size:13px; font-weight:bold; }}
+QProgressBar#RankBar {{ background:{GAP}; border:none; border-radius:5px; }}
+QProgressBar#RankBar::chunk {{ background:{PURPLE}; border-radius:5px; }}
 #Brand {{ font-family:'{CODE_FAMILY}'; font-size:13px; font-weight:bold; color:{HEADER_FG}; }}
 #Badge {{ background:{BADGE_BG}; color:{BG3}; font-family:'{CODE_FAMILY}';
           font-size:11px; font-weight:bold; border-radius:5px; padding:0px 5px; }}
@@ -107,8 +116,8 @@ QPushButton {{
 QPushButton:hover {{ background:{COMMENT}; }}
 QPushButton:pressed {{ background:{PURPLE}; color:{BG3}; }}
 QPushButton:disabled {{ background:{BG2}; color:{COMMENT}; }}
-QPushButton#Run {{ background:{GREEN}; color:{BG3}; }}
-QPushButton#Run:hover {{ background:{GREEN_D}; }}
+QPushButton#Run {{ background:{PURPLE}; color:{BG3}; }}
+QPushButton#Run:hover {{ background:{PURPLE_D}; }}
 QPushButton#Ghost {{ background:{BG2}; }}
 QPushButton#Ghost:hover {{ background:{CUR}; }}
 
@@ -125,10 +134,10 @@ QTreeWidget::item:hover {{ background:{HILITE}; }}
 QTreeView::branch {{ background:transparent; }}
 
 QTextBrowser, QTextEdit, QPlainTextEdit {{
-    background:{BG}; border:none; selection-background-color:{CUR};
+    background:{CARD}; border:none; selection-background-color:{CUR};
     selection-color:{FG};
 }}
-#Output {{ background:{BG2}; }}
+#Output {{ background:{CARD}; }}
 
 QScrollBar:vertical {{ background:transparent; width:14px; margin:3px 3px 3px 0; }}
 QScrollBar::handle:vertical {{ background:{CUR}; border-radius:5px; min-height:34px; }}
@@ -141,7 +150,7 @@ QScrollBar::handle:horizontal:hover {{ background:{COMMENT}; }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width:0; }}
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background:transparent; }}
 
-QSplitter::handle {{ background:{BG3}; }}
+QSplitter::handle {{ background:{GAP}; }}
 QSplitter::handle:horizontal {{ width:6px; }}
 QSplitter::handle:vertical {{ height:6px; }}
 QToolTip {{ background:{BG3}; color:{FG}; border:1px solid {CUR}; }}
@@ -275,7 +284,7 @@ class CodeEditor(QPlainTextEdit):
 
     def paint_line_numbers(self, event):
         painter = QPainter(self.lna)
-        painter.fillRect(event.rect(), QColor(BG))
+        painter.fillRect(event.rect(), QColor(CARD))
         block = self.firstVisibleBlock()
         num = block.blockNumber()
         top = self.blockBoundingGeometry(block).translated(self.contentOffset()).top()
@@ -366,6 +375,79 @@ class RunThread(QThread):
             self.done.emit(("CE", str(e)))
 
 
+# ───────────────────────── 영단어 퀴즈 ─────────────────────────
+
+class QuizDialog(QDialog):
+    def __init__(self, parent, words, pool, db):
+        super().__init__(parent)
+        self.setWindowTitle("영단어 퀴즈")
+        self.resize(480, 360)
+        self.words, self.pool, self.db = words, pool, db
+        self.idx, self.score = 0, 0
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 18, 18, 18)
+        lay.setSpacing(10)
+        self.prompt = QLabel("")
+        self.prompt.setWordWrap(True)
+        self.prompt.setAlignment(Qt.AlignCenter)
+        self.prompt.setStyleSheet(f"color:{PURPLE}; font-size:22px; font-weight:bold; padding:8px;")
+        lay.addWidget(self.prompt)
+        self.btns = []
+        for _ in range(4):
+            b = QPushButton("")
+            b.setObjectName("Ghost")
+            b.clicked.connect(lambda _=False, bb=None: self._answer())
+            lay.addWidget(b)
+            self.btns.append(b)
+        # 버튼별 핸들러(현재 텍스트로 판정)
+        for b in self.btns:
+            b.clicked.disconnect()
+            b.clicked.connect(lambda _=False, bb=b: self._answer(bb.text()))
+        self.info = QLabel("")
+        self.info.setStyleSheet(f"color:{COMMENT};")
+        lay.addWidget(self.info)
+        self._show()
+
+    def _show(self):
+        if self.idx >= len(self.words):
+            self._finish()
+            return
+        w = self.words[self.idx]
+        self.prompt.setText(f"{self.idx + 1} / {len(self.words)}\n\n{w.word}"
+                            + (f"   ({w.pos})" if w.pos else ""))
+        opts = [w.meaning]
+        others = [x.meaning for x in self.pool if x.meaning != w.meaning]
+        random.shuffle(others)
+        opts += others[:3]
+        random.shuffle(opts)
+        for i, b in enumerate(self.btns):
+            if i < len(opts):
+                b.setText(opts[i])
+                b.setVisible(True)
+                b.setEnabled(True)
+            else:
+                b.setVisible(False)
+        self.info.setText(f"점수 {self.score}")
+
+    def _answer(self, chosen=None):
+        if chosen is None or self.idx >= len(self.words):
+            return
+        w = self.words[self.idx]
+        ok = (chosen == w.meaning)
+        if ok:
+            self.score += 1
+        self.db.record(w.word, ok)
+        self.idx += 1
+        self._show()
+
+    def _finish(self):
+        for b in self.btns:
+            b.setVisible(False)
+        n = len(self.words)
+        self.prompt.setText(f"퀴즈 종료!\n\n{self.score} / {n} 정답")
+        self.info.setText("창을 닫으세요.")
+
+
 # ───────────────────────── 메인 윈도우 ─────────────────────────
 
 class MainWindow(QMainWindow):
@@ -411,6 +493,10 @@ class MainWindow(QMainWindow):
         # 실전 모의고사 상태
         self.exam = None              # {preset, problems, ids, solved, deadline, group_item}
         self.item_exam = {}           # id(item) -> preset
+
+        # 영단어
+        self.item_vocab = {}          # id(item) -> level
+        self.vocab_db = VocabDB(SOLUTIONS_DIR / "vocab.db")
         self.exam_timer = QTimer(self)
         self.exam_timer.setInterval(1000)
         self.exam_timer.timeout.connect(self._tick_exam)
@@ -496,6 +582,12 @@ class MainWindow(QMainWindow):
         self.rank_label = QLabel("—")
         self.rank_label.setObjectName("Rank")
         lay.addWidget(self.rank_label)
+        self.rank_bar = QProgressBar()
+        self.rank_bar.setObjectName("RankBar")
+        self.rank_bar.setFixedSize(96, 10)
+        self.rank_bar.setTextVisible(False)
+        self.rank_bar.setRange(0, 100)
+        lay.addWidget(self.rank_bar)
         lay.addSpacing(12)
 
         # 언어 세그먼트
@@ -541,18 +633,79 @@ class MainWindow(QMainWindow):
         self.submit_btn.setVisible(False)
         lay.addWidget(self.submit_btn)
 
-        # 힌트/정답은 헤더에서 제거 → 문제 영역 우클릭 메뉴로 이동
-        reset_btn = mkbtn("" if qta else "⟳", self._on_reset, tip="문제 리셋 (변수 랜덤화)")
-        reset_btn.setFixedWidth(40)
+        # 설정 메뉴(변형 리셋 / 티어 초기화 / 환경 점검)
+        menu_btn = mkbtn("" if qta else "⚙", self._on_settings_menu, tip="설정")
+        menu_btn.setFixedWidth(40)
         if qta:
-            reset_btn.setIcon(qta.icon("fa5s.random", color=FG))
-        lay.addWidget(reset_btn)
+            menu_btn.setIcon(qta.icon("fa5s.cog", color=FG))
+        lay.addWidget(menu_btn)
 
         self.run_btn = mkbtn("Run" if qta else "▶ Run", self.on_run, obj="Run", w=82, tip="실행 (F5)")
         if qta:
             self.run_btn.setIcon(qta.icon("fa5s.play", color=BG3))
         lay.addWidget(self.run_btn)
         return bar
+
+    # ---- 설정 메뉴 / 티어 초기화 / 환경 점검 ----
+    def _on_settings_menu(self):
+        m = QMenu(self)
+        a1 = m.addAction("🎲 문제 변형 리셋 (변수 랜덤화)")
+        a2 = m.addAction("♻ 내 티어 초기화 (진행상황 삭제)")
+        m.addSeparator()
+        a3 = m.addAction("🔧 환경 점검 (Java / C++ / Node)")
+        act = m.exec(QCursor.pos())
+        if act == a1:
+            self._on_reset()
+        elif act == a2:
+            self._reset_tier()
+        elif act == a3:
+            self._env_check()
+
+    def _reset_tier(self):
+        if not self._confirm("내 티어/진행상황을 모두 초기화할까요?\n(푼 문제 기록이 삭제됩니다 · 작성한 코드는 유지)"):
+            return
+        ids = list(self.solved)
+        self.solved.clear()
+        self._save_progress()
+        for pid in ids:
+            p = problems.BY_ID.get(pid) or practice.BY_ID.get(pid)
+            if p:
+                self._refresh_item(p)
+        self._update_profile()
+        self._set_status("내 티어 초기화됨", CYAN)
+
+    def _env_check(self):
+        import subprocess
+        import shutil
+
+        def ver(cmd):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                t = (r.stdout or r.stderr).strip().splitlines()
+                return t[0] if t else ""
+            except Exception:
+                return ""
+
+        self.out.clear()
+        self._append("== 환경 점검 ==\n\n", CYAN, bold=True)
+        self._append(f"  Python (필수)    : {sys.version.split()[0]}   ✓\n", GREEN)
+        if runner.compiler_available("java"):
+            _, ja = runner._java_tools()
+            self._append(f"  Java (JDK)       : {ver([ja, '-version'])}   ✓\n", GREEN)
+        else:
+            self._append("  Java (JDK)       : 미설치  ✗   → 가이드 'Java(JDK) 설치'\n", RED)
+        if runner.compiler_available("cpp"):
+            g = shutil.which("g++") or shutil.which("clang++")
+            self._append(f"  C++ (g++)        : {ver([g, '--version'])}   ✓\n", GREEN)
+        else:
+            self._append("  C++ (g++)        : 미설치  ✗   → 가이드 'C++(g++) 설치'\n", RED)
+        if runner.compiler_available("javascript"):
+            self._append(f"  JavaScript(Node) : {ver([shutil.which('node'), '--version'])}   ✓\n", GREEN)
+        else:
+            self._append("  JavaScript(Node) : 미설치  ✗\n", RED)
+        ok = runner.compiler_available("scss")
+        self._append(f"  SCSS (libsass)   : {'사용 가능 ✓' if ok else '미설치 ✗'}\n", GREEN if ok else RED)
+        self._set_status("환경 점검 완료", CYAN)
 
     # ---- 문제 변형(리셋) ----
     def _apply_variant(self, p):
@@ -596,13 +749,16 @@ class MainWindow(QMainWindow):
 
     def _update_profile(self):
         info = profile.compute(self.solved, self._all_problems)
-        self.rank_label.setText(f"{info['emoji']} {info['code']}  ·  {info['score']}p")
+        self._profile_info = info
+        self.rank_label.setText(f"{info['emoji']} {info['code']}")
+        self.rank_bar.setValue(info["progress"])
         tip = (f"내 랭크: {info['tier_kr']}   ·   점수 {info['score']}   ·   {info['n_solved']}문제 해결\n"
                + "   ".join(f"{profile.RANK_EMOJI[r]} {info['solved'].get(r,0)}/{info['total'].get(r,0)}"
                             for r in profile.RANK_ORDER))
         if info.get("next_goal"):
             tip += f"\n다음 목표: {info['next_goal']}"
         self.rank_label.setToolTip(tip)
+        self.rank_bar.setToolTip(tip)
 
     # ---- 본문 ----
     def _build_body(self):
@@ -688,7 +844,7 @@ class MainWindow(QMainWindow):
         right.setSizes([520, 300])
         split.addWidget(right)
 
-        split.setSizes([260, 430, 640])
+        split.setSizes([140, 480, 700])
         return split
 
     # ---- 트리 ----
@@ -721,39 +877,10 @@ class MainWindow(QMainWindow):
             it.setExpanded(not it.isExpanded())
 
     def _build_tree(self):
-        rk = self._group_item(self.tree, "lank", top=True)
-        for rank in problems.RANKS:
-            node = self._group_item(rk, f"{profile.RANK_EMOJI[rank]} {rank}")
-            for p in problems.ALL[rank]:
-                self._add_problem(node, p)
-        rk.setExpanded(True)
-
-        pr = self._group_item(self.tree, "real", top=True)
-        for cat in practice.CATEGORIES:
-            plist = practice.ALL.get(cat, [])
-            if not plist:
-                continue
-            node = self._group_item(pr, f"{cat}")
-            for p in plist:
-                self._add_problem(node, p)
-        pr.setExpanded(True)
-
-        # 종목별(기초→고급): 기존 문제를 알고리즘 주제로 묶어 난이도순 정렬
-        ptg = self._group_item(self.tree, "part", top=True)
-        tgroups = topics.build(self._all_problems)
-        for tname in topics.TOPIC_ORDER:
-            plist = tgroups.get(tname, [])
-            if not plist:
-                continue
-            node = self._group_item(ptg, f"{tname} ({len(plist)})")
-            for p in plist:
-                self._add_problem(node, p)
-
-        # 언어 문법 학습: lang → 기초/중급/고급 → 레슨
-        lg = self._group_item(self.tree, "lang", top=True)
+        # 1) 언어 문법 학습 (최상단)
+        lg = self._group_item(self.tree, "언어", top=True)
         for lang in lessons.LANGS:
-            n_lang = sum(len(lessons.ALL[lang][lv]) for lv in lessons.LEVELS)
-            if not n_lang:
+            if not sum(len(lessons.ALL[lang][lv]) for lv in lessons.LEVELS):
                 continue
             ln = self._group_item(lg, lessons.LANG_KR[lang])
             for lv in lessons.LEVELS:
@@ -764,17 +891,61 @@ class MainWindow(QMainWindow):
                 for les in items:
                     self._add_lesson(lvnode, les)
 
-        # 실전 모의고사
-        ex = self._group_item(self.tree, "exam", top=True)
-        for preset in exam.PRESETS:
-            it = QTreeWidgetItem(ex, [f"{preset['title']}  ({exam.count(preset)}문제·{preset['minutes']}분)"])
-            if self._ic_file is not None:
-                it.setIcon(0, self._ic_file)
-            self.item_exam[id(it)] = preset
+        # 2) 영단어
+        if vocab.total():
+            vg = self._group_item(self.tree, "영단어", top=True)
+            for lv in vocab.LEVELS:
+                words = vocab.BY_LEVEL.get(lv, [])
+                if not words:
+                    continue
+                it = QTreeWidgetItem(vg, [f"{lv} ({len(words)})"])
+                if self._ic_file is not None:
+                    it.setIcon(0, self._ic_file)
+                self.item_vocab[id(it)] = lv
 
-        # 환경 설정 가이드
+        # 3) 랭크 (랭크별 문제 — 실전 문제도 난이도에 맞게 포함)
+        rk = self._group_item(self.tree, "랭크", top=True)
+        rank_groups = {r: [] for r in problems.RANKS}
+        for p in self._all_problems:
+            if p.rank in rank_groups:
+                rank_groups[p.rank].append(p)
+        for r in problems.RANKS:
+            lst = sorted(rank_groups[r], key=lambda x: (profile.problem_points(x), x.id))
+            node = self._group_item(rk, f"{profile.RANK_EMOJI[r]} {profile.RANK_KR[r]} ({len(lst)})")
+            for p in lst:
+                self._add_problem(node, p)
+
+        # 4) 실전 (유형별)
+        pr = self._group_item(self.tree, "실전", top=True)
+        for cat in practice.CATEGORIES:
+            plist = practice.ALL.get(cat, [])
+            if not plist:
+                continue
+            node = self._group_item(pr, f"{cat}")
+            for p in plist:
+                self._add_problem(node, p)
+
+        # 5) 종목별 (기초→고급)
+        ptg = self._group_item(self.tree, "종목", top=True)
+        for tname in topics.TOPIC_ORDER:
+            plist = topics.build(self._all_problems).get(tname, [])
+            if not plist:
+                continue
+            node = self._group_item(ptg, f"{tname} ({len(plist)})")
+            for p in plist:
+                self._add_problem(node, p)
+
+        # 6) 시험 — 단일 도전 항목
+        ex = self._group_item(self.tree, "시험", top=True)
+        it = QTreeWidgetItem(ex, ["🏁 실전 코딩테스트 도전"])
+        if self._ic_file is not None:
+            it.setIcon(0, self._ic_file)
+        self.item_exam[id(it)] = exam.CHALLENGE
+        ex.setExpanded(True)
+
+        # 7) 가이드
         if lessons.GUIDES:
-            gd = self._group_item(self.tree, "guide", top=True)
+            gd = self._group_item(self.tree, "가이드", top=True)
             for les in lessons.GUIDES:
                 self._add_lesson(gd, les)
 
@@ -824,6 +995,10 @@ class MainWindow(QMainWindow):
         preset = self.item_exam.get(id(cur))
         if preset is not None:
             self._start_exam(preset)
+            return
+        lv = self.item_vocab.get(id(cur))
+        if lv is not None:
+            self._open_vocab(lv)
             return
         les = self.item_lesson.get(id(cur))
         if les is not None:
@@ -958,6 +1133,49 @@ class MainWindow(QMainWindow):
             self._append(r.stderr + "\n", RED)
         self._append(f"\n[exit {r.returncode}]  ⏱ {r.time_ms:.0f}ms\n", COMMENT)
         self._set_status("done" if r.returncode == 0 else "error", GREEN if r.returncode == 0 else RED)
+
+    # ───────────────────────── 영단어 ─────────────────────────
+
+    def _open_vocab(self, level):
+        self._mode = "vocab"
+        self.vocab_level = level
+        self.current = None
+        self.current_lesson = None
+        self._render_vocab(level)
+        self.out.clear()
+        self._set_status("단어 학습 · Run 또는 우클릭으로 퀴즈", CYAN)
+
+    def _render_vocab(self, level):
+        words = vocab.BY_LEVEL.get(level, [])
+        known = self.vocab_db.known_set()
+        st = self.vocab_db.stats()
+        h = [f"<div style='font-family:Segoe UI;color:{FG};font-size:13px;line-height:1.5;'>"]
+        h.append(f"<div style='color:{PURPLE};font-size:18px;font-weight:bold;'>영단어 · {level} "
+                 f"<span style='color:{COMMENT};font-size:12px;'>({len(words)}개)</span></div>")
+        h.append(f"<div style='color:{COMMENT};font-size:11px;'>누적 — 정답 {st['correct']} · 오답 {st['wrong']} · 외운 단어 {st['known']}</div>")
+        h.append(f"<div style='color:{GREEN};font-size:11px;margin-bottom:8px;'>▶ Run 또는 우클릭 → 퀴즈로 테스트</div>")
+        for w in words:
+            mark = " ✅" if w.word in known else ""
+            h.append(f"<div style='margin:7px 0;border-left:2px solid {CUR};padding-left:8px;'>"
+                     f"<b style='color:{CYAN};font-size:15px;'>{html.escape(w.word)}</b> "
+                     f"<span style='color:{COMMENT};'>{html.escape(w.pos)}</span>{mark}<br>"
+                     f"<span style='color:{FG};'>{html.escape(w.meaning)}</span>")
+            if w.example:
+                h.append(f"<br><span style='color:{YELLOW};font-family:{MONO_FAMILY};font-size:12px;'>{html.escape(w.example)}</span>")
+                if w.example_kr:
+                    h.append(f"<br><span style='color:{COMMENT};font-size:12px;'>{html.escape(w.example_kr)}</span>")
+            h.append("</div>")
+        h.append("</div>")
+        self.prob.setHtml("".join(h))
+
+    def _vocab_quiz(self, level):
+        words = vocab.BY_LEVEL.get(level, [])
+        if len(words) < 4:
+            self._set_status("퀴즈를 보려면 단어가 더 필요합니다", ORANGE)
+            return
+        quiz = random.sample(words, min(10, len(words)))
+        QuizDialog(self, quiz, words, self.vocab_db).exec()
+        self._render_vocab(level)
 
     # ───────────────────────── 실전 모의고사 ─────────────────────────
 
@@ -1213,6 +1431,12 @@ class MainWindow(QMainWindow):
         sb.setValue(sb.maximum())
 
     def _prob_menu(self, pos):
+        if self._mode == "vocab":
+            m = QMenu(self.prob)
+            a = m.addAction("📝 퀴즈 10문제 풀기")
+            if m.exec(self.prob.mapToGlobal(pos)) == a:
+                self._vocab_quiz(self.vocab_level)
+            return
         if not self.current:
             return
         m = QMenu(self.prob)
@@ -1262,6 +1486,9 @@ class MainWindow(QMainWindow):
     def on_run(self):
         if self._mode == "lesson":
             self._run_lesson()
+            return
+        if self._mode == "vocab":
+            self._vocab_quiz(self.vocab_level)
             return
         if not self.current:
             return
@@ -1344,12 +1571,41 @@ class MainWindow(QMainWindow):
             if self.exam and p.id in self.exam["ids"]:
                 self.exam["solved"].add(p.id)
                 self._tick_exam()
+            info = getattr(self, "_profile_info", None)
+            if info and info.get("rank") and p.rank in profile.RANK_ORDER:
+                if profile.RANK_ORDER.index(p.rank) < profile.RANK_ORDER.index(info["rank"]):
+                    self._append(f"  ℹ 현재 티어({info['code']})보다 쉬운 난이도라 랭크 게이지는 오르지 않아요.\n"
+                                 f"    더 높은 난이도 문제를 풀어야 게이지가 상승합니다.\n", ORANGE)
         else:
             self._append(f"  ✗ failed   {res.passed}/{res.total}\n", RED, bold=True)
             self._set_status(f"failed {res.passed}/{res.total}", RED)
 
 
+def _run_as_python():
+    """빌드된 exe 가 파이썬 인터프리터 역할도 하도록 (무설치 Python 채점)."""
+    if len(sys.argv) >= 3 and sys.argv[1] == "--exec-py":
+        import runpy
+        target = sys.argv[2]
+        sys.argv = [target] + sys.argv[3:]
+        runpy.run_path(target, run_name="__main__")
+        return True
+    if len(sys.argv) >= 5 and sys.argv[1] == "--func":
+        import importlib.util
+        import json as _json
+        sol, argsp, fn = sys.argv[2], sys.argv[3], sys.argv[4]
+        with open(argsp, encoding="utf-8") as f:
+            a = _json.load(f)
+        spec = importlib.util.spec_from_file_location("usol", sol)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        sys.stdout.write(repr(getattr(m, fn)(*a)))
+        return True
+    return False
+
+
 def main():
+    if _run_as_python():
+        return
     app = QApplication(sys.argv)
     app.setStyleSheet(QSS)
     win = MainWindow()

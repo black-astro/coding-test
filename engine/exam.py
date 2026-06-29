@@ -53,8 +53,19 @@ PRESETS = [
 ]
 
 
+# 사이드바 '시험'의 단일 도전 — 한국 대기업 실전형, 매번 랜덤 출제
+CHALLENGE = {
+    "id": "challenge",
+    "title": "실전 코딩테스트 도전",
+    "minutes": 120,
+    "dist": {"Silver": 1, "Gold": 2, "Platinum": 1},   # 총 4문제(쉬움~어려움 섞기)
+    "pass_solve": 2,
+    "desc": "한국 대기업 실전형 4문제 · 120분. 매번 랜덤 출제되고, 2문제 이상 정답이면 합격입니다.",
+}
+
+
 def get(preset_id):
-    for p in PRESETS:
+    for p in PRESETS + [CHALLENGE]:
         if p["id"] == preset_id:
             return p
     return None
@@ -64,17 +75,27 @@ def count(preset) -> int:
     return sum(preset["dist"].values())
 
 
+def _weighted_sample(rng, pool, n):
+    """출제율(freq) 가중치로 중복 없이 n개 뽑기."""
+    pool = list(pool)
+    weights = [max(1, getattr(p, "freq", 3)) for p in pool]
+    out = []
+    for _ in range(min(n, len(pool))):
+        i = rng.choices(range(len(pool)), weights=weights, k=1)[0]
+        out.append(pool.pop(i))
+        weights.pop(i)
+    return out
+
+
 def assemble(preset, seed, all_problems):
-    """난이도 분포에 맞춰 전체 풀에서 무작위로 문제를 뽑는다."""
+    """난이도 분포에 맞춰 전체 풀(랭크+실전+종목)에서 출제율 가중 무작위로 뽑는다."""
     rng = random.Random(seed)
     by_rank = defaultdict(list)
     for p in all_problems:
         by_rank[p.rank].append(p)
     chosen = []
     for rank, n in preset["dist"].items():
-        pool = list(by_rank.get(rank, []))
-        rng.shuffle(pool)
-        chosen.extend(pool[:n])
+        chosen.extend(_weighted_sample(rng, by_rank.get(rank, []), n))
     rng.shuffle(chosen)
     return chosen
 

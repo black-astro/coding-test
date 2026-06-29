@@ -28,9 +28,10 @@ def main():
         "--noconfirm", "--clean",
         "--windowed",                       # 콘솔창 없이 GUI 로 실행
         "--name", "codeT",
-        "--collect-submodules", "problems",   # 동적 import 되는 문제/레슨 모듈 모두 포함
+        "--collect-submodules", "problems",   # 동적 import 되는 문제/레슨/단어 모듈 모두 포함
         "--collect-submodules", "practice",
         "--collect-submodules", "lessons",
+        "--collect-submodules", "vocab",
         "--collect-all", "qtawesome",         # 아이콘 폰트 데이터
         "--collect-all", "sass",              # libsass 바이너리(SCSS 컴파일)
         "--add-data", f"{ROOT / 'engine' / '_func_harness.py'}{SEP}engine",

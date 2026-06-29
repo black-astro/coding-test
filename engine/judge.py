@@ -18,7 +18,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 
 from engine import runner
-from engine.runner import run_process, compile_solution, FUNC_HARNESS, python_exe
+from engine.runner import run_process, compile_solution, FUNC_HARNESS, python_exe, func_cmd
 
 import sys
 
@@ -149,8 +149,7 @@ def _judge_func(problem, source_path: Path) -> JudgeResult:
             expected = _normalize(repr(tc["expected"]))
             args_path = Path(td) / f"args_{i}.json"
             args_path.write_text(json.dumps(args), encoding="utf-8")
-            cmd = [python_exe(), str(FUNC_HARNESS), str(source_path),
-                   str(args_path), problem.func_name]
+            cmd = func_cmd(FUNC_HARNESS, source_path, args_path, problem.func_name)
             run = run_process(cmd, "", kill_s)
             actual = _normalize(run.stdout)
             verdict = _verdict_for(run, expected, actual, tl_ms, ml_mb)
