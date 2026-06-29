@@ -139,13 +139,13 @@ QTextBrowser, QTextEdit, QPlainTextEdit {{
 }}
 #Output {{ background:{CARD}; }}
 
-QScrollBar:vertical {{ background:transparent; width:14px; margin:3px 3px 3px 0; }}
-QScrollBar::handle:vertical {{ background:{CUR}; border-radius:5px; min-height:34px; }}
+QScrollBar:vertical {{ background:transparent; width:7px; margin:3px 2px 3px 0; }}
+QScrollBar::handle:vertical {{ background:{CUR}; border-radius:3px; min-height:30px; }}
 QScrollBar::handle:vertical:hover {{ background:{COMMENT}; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background:transparent; }}
-QScrollBar:horizontal {{ background:transparent; height:14px; margin:0 3px 3px 3px; }}
-QScrollBar::handle:horizontal {{ background:{CUR}; border-radius:5px; min-width:34px; }}
+QScrollBar:horizontal {{ background:transparent; height:7px; margin:0 3px 2px 3px; }}
+QScrollBar::handle:horizontal {{ background:{CUR}; border-radius:3px; min-width:30px; }}
 QScrollBar::handle:horizontal:hover {{ background:{COMMENT}; }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width:0; }}
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background:transparent; }}
@@ -457,8 +457,8 @@ class MainWindow(QMainWindow):
         _blank = QPixmap(1, 1)
         _blank.fill(Qt.transparent)
         self.setWindowIcon(QIcon(_blank))           # 좌상단 프로그램 아이콘 제거
-        self.resize(1420, 880)
-        self.setMinimumSize(1140, 720)
+        self.resize(1500, 900)
+        self.setMinimumSize(1160, 720)
 
         self.lang = "python"
         self.current = None
@@ -841,10 +841,10 @@ class MainWindow(QMainWindow):
         self.out.setFont(QFont(MONO_FAMILY, 9))
         ol.addWidget(self.out, 1)
         right.addWidget(outp)
-        right.setSizes([520, 300])
+        right.setSizes([560, 250])
         split.addWidget(right)
 
-        split.setSizes([140, 480, 700])
+        split.setSizes([280, 410, 640])
         return split
 
     # ---- 트리 ----
