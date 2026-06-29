@@ -21,6 +21,7 @@ _CONTENT_MODULES = [
     "java_basic", "java_mid", "java_adv",
     "cpp_basic", "cpp_mid", "cpp_adv",
     "js_lessons", "css_lessons", "scss_lessons",
+    "js_lessons2", "css_lessons2", "scss_lessons2",
 ]
 
 ALL = {lang: {lv: [] for lv in LEVELS} for lang in LANGS}

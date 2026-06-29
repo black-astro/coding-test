@@ -11,7 +11,7 @@ from pathlib import Path
 LEVELS = ["기초", "중급", "고급"]
 CATEGORIES = ["일반", "IT"]
 
-_DATA_MODULES = ["basic", "inter", "adv", "it_terms", "it_slang"]
+_DATA_MODULES = ["basic", "inter", "adv", "it_terms", "it_slang", "everyday", "backend", "extra"]
 
 ALL = []
 _dir = Path(__file__).parent / "data"
