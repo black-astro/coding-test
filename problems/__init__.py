@@ -35,7 +35,8 @@ def _submodules(pkgdir: Path, fallback):
 
 
 _BATCH_MODULES = ["bronze_a", "bronze_b", "bronze_c", "silver_a", "silver_b", "silver_c",
-                  "gold_a", "gold_b", "gold_c", "platinum_a", "platinum_b", "platinum_c"]
+                  "gold_a", "gold_b", "gold_c", "platinum_a", "platinum_b", "platinum_c",
+                  "gap_graph", "gap_dp", "gap_impl"]
 _META_MODULES = ["bronze", "silver", "gold", "platinum"]
 
 # 1) 기본 시드 문제

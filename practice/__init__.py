@@ -81,8 +81,7 @@ _CPP = {}
 _cpp_names = []
 if _cpp_dir.exists():
     _cpp_names = [i.name for i in pkgutil.iter_modules([str(_cpp_dir)])]
-for _name in (_cpp_names or ["impl", "bfs", "bruteforce", "sort", "hash", "twopointer",
-                             "binsearch", "greedy", "dp", "dijkstra", "union", "heap", "segtree"]):
+for _name in (_cpp_names or ["practice_all"]):
     try:
         _m = importlib.import_module(f"practice.cpp.{_name}")
     except ModuleNotFoundError:

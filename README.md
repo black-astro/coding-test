@@ -14,12 +14,16 @@
 - **Python 3.10+** (필수)
 - **JDK 17+** (Java로 풀 때) — 없으면 Java 채점만 비활성
 - **g++ (MinGW)** (C++로 풀 때) — 없으면 C++ 채점만 비활성
+- **Node.js** (JavaScript로 풀 때) — 없으면 JS 채점만 비활성
+- SCSS 컴파일은 `libsass`(파이썬 패키지)로 자동 처리
 
 ### 설치
 ```bash
-pip install -r requirements.txt      # PySide6, qtawesome
+pip install -r requirements.txt      # PySide6, qtawesome, libsass
 python gui.py                         # GUI 실행
 ```
+
+지원 언어: **Python · Java · C++ · JavaScript** (문제 풀이/채점) + **CSS · SCSS** (웹 문법 학습).
 
 > JDK / g++ 설치 방법은 앱 안의 **사이드바 → guide** 섹션에 단계별로 들어 있습니다.
 > (또는 아래 5번 참고)
@@ -52,7 +56,7 @@ python main.py
 | **lank** | 랭크별 문제 — 🥉 Bronze / 🥈 Silver / 🥇 Gold / 💎 Platinum (각 50문제) |
 | **real** | 유형별 실전 — 구현/DFS·BFS/DP/그리디/해시/이분탐색/세그트리 등 대기업 빈출 유형 |
 | **part** | 종목별 학습 — 같은 알고리즘을 **기초→고급** 난이도순으로 (BFS가 실버~골드에 걸쳐 나오는 식) |
-| **lang** | 언어 문법 강의 — **Python·Java·C++ × 기초·중급·고급** (설명+예시+사용처+단점, 직접 실행) |
+| **lang** | 언어 문법 강의 — **Python·Java·C++·JavaScript × 기초·중급·고급** + **CSS·SCSS** (설명+예시+사용처+단점, 직접 실행/컴파일) |
 | **exam** | **실전 모의고사** — 난이도 섞어 출제, 제한시간, 합격/불합격 판정 |
 | **guide** | 환경 설정 — JDK/g++ 설치·적용·사용법 |
 
