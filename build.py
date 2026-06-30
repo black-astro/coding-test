@@ -35,6 +35,8 @@ def main():
         "--collect-all", "qtawesome",         # 아이콘 폰트 데이터
         "--collect-all", "sass",              # libsass 바이너리(SCSS 컴파일)
         "--add-data", f"{ROOT / 'engine' / '_func_harness.py'}{SEP}engine",
+        "--add-data", f"{ROOT / 'img'}{SEP}img",   # 로고/아이콘 리소스
+        "--icon", str(ROOT / "img" / "app.ico"),   # exe 아이콘
         "gui.py",
     ]
     print(">", " ".join(args))

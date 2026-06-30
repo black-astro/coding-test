@@ -17,6 +17,10 @@ from dataclasses import dataclass
 
 IS_WINDOWS = (os.name == "nt")
 
+# Windows 에서 콘솔 하위 프로세스(javac/java/g++/실행파일 등)가
+# 새 콘솔 창을 띄우지 않도록 하는 플래그. (--windowed 빌드에서 창 깜빡임 방지)
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
+
 ENGINE_DIR = Path(__file__).resolve().parent
 FUNC_HARNESS = ENGINE_DIR / "_func_harness.py"
 
@@ -78,6 +82,7 @@ def run_process(cmd, stdin_text: str, timeout_s: float, cwd=None) -> RunResult:
         stderr=subprocess.PIPE,
         text=True,
         cwd=cwd,
+        creationflags=_NO_WINDOW,
     )
     timed_out = False
     try:
@@ -252,6 +257,7 @@ def compile_solution(lang: str, source_path: Path) -> CompileResult:
         proc = subprocess.run(
             [javac, "-encoding", "UTF-8", str(main_java)],
             capture_output=True, text=True, cwd=workdir,
+            creationflags=_NO_WINDOW,
         )
         if proc.returncode != 0:
             return CompileResult(False, None, proc.stderr.strip(), workdir)
@@ -268,6 +274,7 @@ def compile_solution(lang: str, source_path: Path) -> CompileResult:
         proc = subprocess.run(
             [comp, "-O2", "-std=c++17", "-static", "-o", str(exe), str(source_path)],
             capture_output=True, text=True, cwd=workdir,
+            creationflags=_NO_WINDOW,
         )
         if proc.returncode != 0:
             return CompileResult(False, None, proc.stderr.strip(), workdir)
@@ -297,7 +304,8 @@ def run_scss(source_text: str):
     if exe:
         try:
             proc = subprocess.run([exe, "--stdin", "--no-source-map"],
-                                  input=source_text, capture_output=True, text=True, timeout=40)
+                                  input=source_text, capture_output=True, text=True, timeout=40,
+                                  creationflags=_NO_WINDOW)
             if proc.returncode != 0:
                 return False, "", (proc.stderr or "컴파일 실패").strip()
             return True, proc.stdout, ""

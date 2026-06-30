@@ -25,12 +25,33 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QSplitter, QTreeWidget, QTreeWidgetItem, QTextBrowser,
                                QTextEdit, QPlainTextEdit, QSizePolicy, QMenu, QMessageBox,
                                QDialog, QProgressBar, QCheckBox, QComboBox,
-                               QStackedWidget, QScrollArea)
+                               QStackedWidget, QScrollArea, QSystemTrayIcon)
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
+
+
+def resource(*parts) -> Path:
+    """리소스 경로. PyInstaller 빌드 시엔 _MEIPASS 에서 찾는다."""
+    base = Path(getattr(sys, "_MEIPASS", ROOT))
+    return base.joinpath(*parts)
+
+
+ICON_ICO = resource("img", "app.ico")     # 멀티사이즈(작업표시줄/프로그램 아이콘)
+ICON_PNG = resource("img", "logo_clean.png")
+
+
+def app_icon():
+    """프로그램/트레이 공용 아이콘. 멀티사이즈 .ico 우선, 없으면 png."""
+    from PySide6.QtGui import QIcon
+    for f in (ICON_ICO, ICON_PNG):
+        if f.exists():
+            ic = QIcon(str(f))
+            if not ic.isNull():
+                return ic
+    return QIcon()
 
 import problems
 import practice
@@ -134,6 +155,11 @@ QPushButton#Seg:checked {{ background:{PURPLE}; color:{BG3}; }}
 QPushButton#SegL {{ border-top-left-radius:8px; border-bottom-left-radius:8px; }}
 QPushButton#SegR {{ border-top-right-radius:8px; border-bottom-right-radius:8px; }}
 
+QComboBox {{ background:{BG2}; color:{FG}; border:1px solid {BORDER}; border-radius:5px; padding:3px 8px; font-size:11px; }}
+QComboBox:hover {{ border-color:{CUR}; }}
+QComboBox::drop-down {{ border:none; width:18px; }}
+QComboBox QAbstractItemView {{ background:{BG2}; color:{FG}; border:1px solid {CUR};
+    selection-background-color:{CUR}; selection-color:{CYAN}; outline:0; }}
 QTreeWidget {{ background:{SIDE}; border:none; outline:0; font-size:11px; }}
 QTreeWidget::item {{ padding:3px 2px; }}
 QTreeWidget::item:selected {{ background:{CUR}; color:{CYAN}; }}
@@ -555,6 +581,18 @@ class SettingsDialog(QDialog):
         row.addStretch(1)
         lay.addLayout(row)
 
+        crow = QHBoxLayout()
+        crow.addWidget(QLabel("닫기(X) 버튼 동작"))
+        self.combo_close = QComboBox()
+        for label, data in [("물어보기", "ask"), ("프로그램 종료", "quit"), ("트레이로 보내기", "tray")]:
+            self.combo_close.addItem(label, data)
+        cur_close = settings.get("close_action", "ask") or "ask"
+        ci = self.combo_close.findData(cur_close)
+        self.combo_close.setCurrentIndex(ci if ci >= 0 else 0)
+        crow.addWidget(self.combo_close)
+        crow.addStretch(1)
+        lay.addLayout(crow)
+
         lay.addWidget(title("관리"))
         for label, cb in [("🎲 문제 변형 리셋", parent._on_reset),
                           ("♻ 내 티어 초기화", parent._reset_tier),
@@ -575,6 +613,7 @@ class SettingsDialog(QDialog):
         self.s.set("keep_solutions", "1" if self.cb_keep.isChecked() else "0")
         self.s.set("show_stdin", "1" if self.cb_stdin.isChecked() else "0")
         self.s.set("quiz_size", self.combo.currentText())
+        self.s.set("close_action", self.combo_close.currentData())
         self.win._apply_settings()
         self.accept()
 
@@ -585,9 +624,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"code T  v{APP_VERSION}")
-        _blank = QPixmap(1, 1)
-        _blank.fill(Qt.transparent)
-        self.setWindowIcon(QIcon(_blank))           # 좌상단 프로그램 아이콘 제거
+        self.setWindowIcon(app_icon())              # 프로그램/작업표시줄 아이콘
         self.resize(1500, 900)
         self.setMinimumSize(1160, 720)
 
@@ -663,19 +700,151 @@ class MainWindow(QMainWindow):
         side_sc.setContext(Qt.ApplicationShortcut)
         side_sc.activated.connect(self._toggle_sidebar)
         self._shortcuts.append(side_sc)
+        hide_sc = QShortcut(QKeySequence("Ctrl+H"), self)   # 하이드(집중) 모드
+        hide_sc.setContext(Qt.ApplicationShortcut)
+        hide_sc.activated.connect(self._toggle_hide_mode)
+        self._shortcuts.append(hide_sc)
 
+        self._hidden_mode = False
+        self._tray_hinted = False
         self._build_tree()
+        self._populate_hide_combo()
+        self._build_tray()
         self._update_profile()
         self._apply_settings()
         self._native_applied = False
 
     def closeEvent(self, event):
+        # X 버튼: 설정값(close_action)에 따라 종료/트레이, 미설정이면 물어봄
+        action = self.settings.get("close_action", "ask") or "ask"
+        if action == "ask":
+            action = self._ask_close_action()
+            if action is None:                  # 취소
+                event.ignore()
+                return
+        if action == "tray" and getattr(self, "tray", None) is not None:
+            event.ignore()
+            self.hide()
+            self.tray.show()
+            if not self._tray_hinted:
+                self._tray_hinted = True
+                self.tray.showMessage("code T", "트레이에서 계속 실행 중 — 아이콘을 클릭하면 다시 열려요.",
+                                      QSystemTrayIcon.Information, 3000)
+            return
+        # 종료
+        self._cleanup_solutions()
+        if getattr(self, "tray", None) is not None:
+            self.tray.hide()
+        event.accept()
+        QApplication.instance().quit()
+
+    def _cleanup_solutions(self):
         # 풀이 파일 보관 끄면 종료 시 문제 풀이 폴더 정리(용량 절약). db/진행상황은 유지.
         if not self.settings.get_bool("keep_solutions"):
             for d in SOLUTIONS_DIR.glob("*"):
                 if d.is_dir():
                     shutil.rmtree(d, ignore_errors=True)
-        super().closeEvent(event)
+
+    def _ask_close_action(self):
+        """X 클릭 시 종료/트레이 선택. None=취소. '기억' 체크 시 설정에 저장."""
+        box = QMessageBox(self)
+        box.setWindowTitle("종료")
+        box.setText("프로그램을 어떻게 할까요?")
+        quit_b = box.addButton("프로그램 종료", QMessageBox.AcceptRole)
+        tray_b = box.addButton("트레이로 보내기", QMessageBox.ActionRole)
+        box.addButton("취소", QMessageBox.RejectRole)
+        remember = QCheckBox("다음부터 이 선택 기억")
+        box.setCheckBox(remember)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is quit_b:
+            action = "quit"
+        elif clicked is tray_b:
+            action = "tray"
+        else:
+            return None
+        if remember.isChecked():
+            self.settings.set("close_action", action)
+        return action
+
+    # ---- 시스템 트레이 ----
+    def _build_tray(self):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray = None
+            return
+        self.tray = QSystemTrayIcon(self)
+        self.tray.setIcon(app_icon())
+        self.tray.setToolTip("code T")
+        self._tray_menu = QMenu()
+        self._tray_menu.addAction("열기", self._show_normal)
+        self._tray_menu.addAction("하이드 모드", self._tray_hide_mode)
+        self._tray_menu.addSeparator()
+        self._tray_menu.addAction("종료", self._quit_app)
+        self.tray.setContextMenu(self._tray_menu)
+        self.tray.activated.connect(self._tray_activated)
+        self.tray.show()
+
+    def _tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.DoubleClick, QSystemTrayIcon.Trigger):
+            self._show_normal()
+
+    def _show_normal(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _tray_hide_mode(self):
+        self._show_normal()
+        self._set_hide_mode(True)
+
+    def _quit_app(self):
+        self._cleanup_solutions()
+        if getattr(self, "tray", None) is not None:
+            self.tray.hide()
+        QApplication.instance().quit()
+
+    # ---- 하이드(집중) 모드 ----
+    def _populate_hide_combo(self):
+        self.hide_combo.blockSignals(True)
+        self.hide_combo.clear()
+        self.hide_combo.addItem("— 문제 선택 —", None)
+        for p in self._all_problems:
+            tier = p.tier or RANK_INITIAL.get(p.rank, p.rank)
+            self.hide_combo.addItem(f"[{tier}] {p.title}", p.id)
+        self.hide_combo.blockSignals(False)
+
+    def _sync_hide_combo(self):
+        pid = self.current.id if self.current else None
+        idx = self.hide_combo.findData(pid) if pid else 0
+        self.hide_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _on_hide_combo(self, index):
+        pid = self.hide_combo.itemData(index)
+        if not pid:
+            return
+        items = self.problem_item.get(pid)
+        if items:
+            self.tree.setCurrentItem(items[0])      # → on_tree_select 로 로드
+
+    def _toggle_hide_mode(self):
+        self._set_hide_mode(not self._hidden_mode)
+
+    def _set_hide_mode(self, on):
+        """on: 사이드바·문제설명 숨기고 에디터+터미널만. 문제 선택은 상단 콤보로."""
+        self._hidden_mode = on
+        self.side.setVisible(not on)
+        self.probp.setVisible(not on)
+        self.hide_combo.setVisible(on)
+        self.rank_label.setVisible(not on)
+        self.rank_bar.setVisible(not on)
+        self.side_toggle.setVisible(not on)
+        if qta:
+            self.hide_btn.setIcon(qta.icon("fa5s.expand" if on else "fa5s.compress", color=FG))
+        else:
+            self.hide_btn.setText("해제" if on else "집중")
+        if on:
+            self._sync_hide_combo()
+            self._set_status("하이드 모드 — 코딩 + 터미널만 (Ctrl+H 또는 우측 버튼으로 해제)", CYAN)
 
     # ---- 네이티브 타이틀바(캡션) 다크/색상 ----
     def showEvent(self, event):
@@ -730,7 +899,19 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(10, 0, 10, 0)
         lay.setSpacing(6)
 
-        # 사이드바 접기/펴기 (하이드 모드)
+        # 헤더 로고
+        logo = QLabel()
+        logo.setObjectName("HeaderLogo")
+        pm = app_icon().pixmap(24, 24)
+        if not pm.isNull():
+            logo.setPixmap(pm)
+        logo.setFixedSize(26, 26)
+        logo.setScaledContents(True)
+        logo.setToolTip(f"code T  v{APP_VERSION}")
+        lay.addWidget(logo)
+        lay.addSpacing(2)
+
+        # 사이드바 접기/펴기
         self.side_toggle = QPushButton()
         self.side_toggle.setObjectName("Ghost")
         self.side_toggle.setFixedWidth(34)
@@ -741,6 +922,15 @@ class MainWindow(QMainWindow):
             self.side_toggle.setText("☰")
         self.side_toggle.clicked.connect(self._toggle_sidebar)
         lay.addWidget(self.side_toggle)
+
+        # 하이드(집중) 모드용 문제 선택 콤보 — 평소 숨김
+        self.hide_combo = QComboBox()
+        self.hide_combo.setObjectName("HideCombo")
+        self.hide_combo.setMinimumWidth(240)
+        self.hide_combo.setToolTip("문제 선택")
+        self.hide_combo.setVisible(False)
+        self.hide_combo.activated.connect(self._on_hide_combo)
+        lay.addWidget(self.hide_combo)
 
         # 내 랭크/점수 (작게)
         self.rank_label = QLabel("—")
@@ -805,6 +995,14 @@ class MainWindow(QMainWindow):
         self.next_btn.setVisible(False)
         lay.addWidget(self.next_btn)
 
+        # 하이드(집중) 모드 토글
+        self.hide_btn = mkbtn("집중" if not qta else "", self._toggle_hide_mode,
+                              tip="하이드(집중) 모드 — 문제 설명 숨기고 코딩만 (Ctrl+H)")
+        self.hide_btn.setFixedWidth(40)
+        if qta:
+            self.hide_btn.setIcon(qta.icon("fa5s.compress", color=FG))
+        lay.addWidget(self.hide_btn)
+
         # 설정 메뉴
         menu_btn = mkbtn("" if qta else "⚙", self._open_settings, tip="설정")
         menu_btn.setFixedWidth(40)
@@ -852,9 +1050,12 @@ class MainWindow(QMainWindow):
         import subprocess
         import shutil
 
+        no_window = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
         def ver(cmd):
             try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=10,
+                                   creationflags=no_window)
                 t = (r.stdout or r.stderr).strip().splitlines()
                 return t[0] if t else ""
             except Exception:
@@ -968,6 +1169,7 @@ class MainWindow(QMainWindow):
 
         # 2) 문제 설명
         probp = QFrame()
+        self.probp = probp
         probp.setObjectName("PanelBG")
         pl = QVBoxLayout(probp)
         pl.setContentsMargins(10, 10, 8, 10)
@@ -1920,7 +2122,16 @@ def _run_as_python():
 def main():
     if _run_as_python():
         return
+    # Windows 작업표시줄이 창 아이콘을 쓰도록 고유 AppID 지정(아이콘 그룹화)
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("blackastro.codeT")
+        except Exception:
+            pass
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)   # 트레이 보내기 지원 — 종료는 명시적으로만
+    app.setWindowIcon(app_icon())          # 작업표시줄/전역 아이콘
     app.setStyleSheet(QSS)
     win = MainWindow()
     win.show()
