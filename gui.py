@@ -501,6 +501,7 @@ def drill_sample(words, cap=30):
 ROLE_TIER = Qt.UserRole + 2      # 티어 번호(1~5) 또는 None
 ROLE_SOLVED = Qt.UserRole + 3    # 해결 여부
 ROLE_LOCKED = Qt.UserRole + 4    # 상위 랭크 잠김 여부
+ROLE_TIERCODE = Qt.UserRole + 5  # 티어 코드(랭크+티어, 예: "G3")
 
 
 class TierDelegate(QStyledItemDelegate):
@@ -524,7 +525,7 @@ class TierDelegate(QStyledItemDelegate):
         selected = bool(opt.state & QStyle.State_Selected)
 
         locked = bool(index.data(ROLE_LOCKED))
-        tag = f"T{tnum}"
+        tag = index.data(ROLE_TIERCODE) or f"T{tnum}"   # 랭크+티어 (예: G3)
         tag_w = fm.horizontalAdvance(tag)
         tcol = QColor(TIER_COLOR.get(tnum, FG))
         if locked:
@@ -2382,6 +2383,7 @@ class MainWindow(QMainWindow):
         if self._ic_file is not None:
             it.setIcon(0, self._ic_done if solved else self._ic_file)
         it.setData(0, ROLE_TIER, self._tier_num(p))
+        it.setData(0, ROLE_TIERCODE, getattr(p, "tier", "") or "")
         it.setData(0, ROLE_SOLVED, solved)
         it.setData(0, ROLE_LOCKED, self._is_locked(p))
         it.setForeground(0, QColor(FG))

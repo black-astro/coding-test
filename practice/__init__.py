@@ -115,6 +115,10 @@ _fixup(ALL)
 
 BY_ID = {p.id: p for plist in ALL.values() for p in plist}
 
+# JS(Node.js) 정답코드 채우기
+from engine.problem_fixups import apply_js_refs as _jsrefs
+_jsrefs(BY_ID)
+
 
 def count(category: str) -> int:
     return len(ALL.get(category, []))

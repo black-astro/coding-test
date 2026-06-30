@@ -172,3 +172,15 @@ def apply_testcase_boost(by_id):
             continue
         inp, out = fn()
         p.testcases = list(p.testcases) + [{"input": inp, "output": out}]
+
+
+def apply_js_refs(by_id):
+    """stdin 문제에 JS(Node.js) 정답코드(reference_js)를 채운다(비어 있는 경우만)."""
+    try:
+        from engine.js_refs import JS_REFS
+    except Exception:
+        return
+    for pid, code in JS_REFS.items():
+        p = by_id.get(pid)
+        if p is not None and not (getattr(p, "reference_js", "") or "").strip():
+            p.reference_js = code

@@ -115,6 +115,10 @@ BY_ID = {p.id: p for r in RANKS for p in ALL[r]}
 from engine.problem_fixups import apply_testcase_boost as _boost
 _boost(BY_ID)
 
+# JS(Node.js) 정답코드 채우기
+from engine.problem_fixups import apply_js_refs as _jsrefs
+_jsrefs(BY_ID)
+
 
 def count(rank: str) -> int:
     return len(ALL[rank])
