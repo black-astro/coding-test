@@ -19,12 +19,15 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, Signal, QThread, QTimer
 from PySide6.QtGui import (QColor, QFont, QPainter, QTextCharFormat, QTextCursor,
                            QSyntaxHighlighter, QTextFormat, QTextOption, QAction,
-                           QKeySequence, QShortcut, QIcon, QPixmap, QCursor)
+                           QKeySequence, QShortcut, QIcon, QPixmap, QCursor, QPalette)
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabel,
                                QPushButton, QButtonGroup, QHBoxLayout, QVBoxLayout,
                                QSplitter, QTreeWidget, QTreeWidgetItem, QTextBrowser,
                                QTextEdit, QPlainTextEdit, QSizePolicy, QMenu, QMessageBox,
-                               QDialog, QProgressBar, QCheckBox, QComboBox)
+                               QDialog, QProgressBar, QCheckBox, QComboBox,
+                               QStackedWidget, QScrollArea)
+
+APP_VERSION = "1.0.0"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -80,7 +83,7 @@ MONO_FAMILY = "Consolas"
 # ─────────────────────────────────────────────────────────────────
 #  테마 커스터마이즈 — 여기 값만 바꾸면 프로그램 헤더 색이 바뀐다.
 # ─────────────────────────────────────────────────────────────────
-HEADER_BG    = GAP      # 헤더 = 프로그램에서 가장 진한 여백색
+HEADER_BG    = "#262834"  # 헤더 색(=카드색). 여기 값만 바꾸면 헤더/네이티브 타이틀바 색이 바뀐다.
 HEADER_FG    = FG       # 헤더 글자색(브랜드 'code')
 BADGE_BG     = PINK     # 'T' 뱃지 배경색
 CAPTION_COLOR = HEADER_BG  # Windows 네이티브 타이틀바 색 (Win11 22000+ 에서 정확히 적용)
@@ -96,6 +99,7 @@ VERDICT_TXT = {"AC": "PASS", "WA": "FAIL", "TLE": "TIMEOUT",
 QSS = f"""
 * {{ font-family: 'Segoe UI'; color: {FG}; }}
 QMainWindow, QWidget {{ background: {GAP}; }}
+QLabel {{ background: transparent; }}   /* 타이틀/라벨은 뒤 카드색이 그대로 비치도록 */
 QSplitter {{ background: {GAP}; }}
 #TitleBar {{ background: {HEADER_BG}; }}
 #Panel {{ background: {CARD}; border-radius: 9px; }}
@@ -103,7 +107,7 @@ QSplitter {{ background: {GAP}; }}
 #Side {{ background: {SIDE}; border-radius: 9px; }}
 #Body {{ background: {GAP}; }}
 #Rank {{ color:{FG}; font-size:13px; font-weight:bold; }}
-QProgressBar#RankBar {{ background:{GAP}; border:none; border-radius:5px; }}
+QProgressBar#RankBar {{ background:{CUR}; border:none; border-radius:5px; }}
 QProgressBar#RankBar::chunk {{ background:{PURPLE}; border-radius:5px; }}
 #Brand {{ font-family:'{CODE_FAMILY}'; font-size:13px; font-weight:bold; color:{HEADER_FG}; }}
 #Badge {{ background:{BADGE_BG}; color:{BG3}; font-family:'{CODE_FAMILY}';
@@ -141,6 +145,8 @@ QTextBrowser, QTextEdit, QPlainTextEdit {{
     selection-color:{FG};
 }}
 #Output {{ background:{CARD}; }}
+#ProblemView, #ProblemBody {{ background:{CARD}; border:none; }}
+#CodeBox {{ background:{CARD}; border:1px solid {BORDER}; border-radius:6px; }}
 
 QScrollBar:vertical {{ background:transparent; width:7px; margin:3px 2px 3px 0; }}
 QScrollBar::handle:vertical {{ background:{CUR}; border-radius:3px; min-height:30px; }}
@@ -341,6 +347,64 @@ class CodeEditor(QPlainTextEdit):
         menu.exec(event.globalPos())
 
 
+# ───────────────────────── 네이티브 문제 뷰 ─────────────────────────
+
+def make_label(text, color=FG, size=13, bold=False, wrap=True):
+    """문제 화면용 텍스트 라벨 (HTML 아님 · 순수 QLabel)."""
+    w = QLabel(str(text))
+    w.setWordWrap(wrap)
+    w.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    weight = "bold" if bold else "normal"
+    w.setStyleSheet(f"color:{color}; font-family:'Segoe UI'; font-size:{size}px;"
+                    f" font-weight:{weight}; background:transparent;")
+    return w
+
+
+def make_codebox(text):
+    """예제/코드 블록 — 배경은 카드색과 동일, 테두리로만 구분."""
+    box = QFrame()
+    box.setObjectName("CodeBox")
+    lay = QVBoxLayout(box)
+    lay.setContentsMargins(10, 7, 10, 7)
+    lab = QLabel(str(text).rstrip())
+    lab.setFont(QFont(MONO_FAMILY, 11))
+    lab.setStyleSheet(f"color:{YELLOW}; background:transparent;")
+    lab.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    lay.addWidget(lab)
+    return box
+
+
+class ProblemView(QScrollArea):
+    """문제 화면을 QTextBrowser(HTML) 대신 네이티브 위젯으로 구성하는 스크롤 영역."""
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("ProblemView")
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        body = QWidget()
+        body.setObjectName("ProblemBody")
+        self.vbox = QVBoxLayout(body)
+        self.vbox.setContentsMargins(2, 2, 8, 8)
+        self.vbox.setSpacing(3)
+        self.vbox.addStretch(1)            # 항상 맨 끝에 유지 → 위에서부터 쌓임
+        self.setWidget(body)
+
+    def clear(self):
+        while self.vbox.count() > 1:        # 마지막 stretch 보존
+            it = self.vbox.takeAt(0)
+            w = it.widget()
+            if w:
+                w.setParent(None)
+                w.deleteLater()
+
+    def add(self, w, top=0):
+        if top:
+            self.vbox.insertSpacing(self.vbox.count() - 1, top)
+        self.vbox.insertWidget(self.vbox.count() - 1, w)
+
+
 # ───────────────────────── 채점 스레드 ─────────────────────────
 
 class JudgeThread(QThread):
@@ -520,7 +584,7 @@ class SettingsDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("code T")
+        self.setWindowTitle(f"code T  v{APP_VERSION}")
         _blank = QPixmap(1, 1)
         _blank.fill(Qt.transparent)
         self.setWindowIcon(QIcon(_blank))           # 좌상단 프로그램 아이콘 제거
@@ -595,6 +659,10 @@ class MainWindow(QMainWindow):
         save_sc.setContext(Qt.ApplicationShortcut)
         save_sc.activated.connect(self._save_editor)
         self._shortcuts.append(save_sc)
+        side_sc = QShortcut(QKeySequence("Ctrl+B"), self)   # 사이드바 접기/펴기
+        side_sc.setContext(Qt.ApplicationShortcut)
+        side_sc.activated.connect(self._toggle_sidebar)
+        self._shortcuts.append(side_sc)
 
         self._build_tree()
         self._update_profile()
@@ -661,6 +729,18 @@ class MainWindow(QMainWindow):
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(10, 0, 10, 0)
         lay.setSpacing(6)
+
+        # 사이드바 접기/펴기 (하이드 모드)
+        self.side_toggle = QPushButton()
+        self.side_toggle.setObjectName("Ghost")
+        self.side_toggle.setFixedWidth(34)
+        self.side_toggle.setToolTip("사이드바 접기/펴기 (Ctrl+B)")
+        if qta:
+            self.side_toggle.setIcon(qta.icon("fa5s.bars", color=FG))
+        else:
+            self.side_toggle.setText("☰")
+        self.side_toggle.clicked.connect(self._toggle_sidebar)
+        lay.addWidget(self.side_toggle)
 
         # 내 랭크/점수 (작게)
         self.rank_label = QLabel("—")
@@ -738,6 +818,15 @@ class MainWindow(QMainWindow):
         self.submit_btn = mkbtn("제출", self.on_submit, obj="Run", w=74, tip="채점 — 정답 판정 (Ctrl+Enter)")
         lay.addWidget(self.submit_btn)
         return bar
+
+    def _toggle_sidebar(self):
+        """사이드바(탐색기)를 접거나 편다 — 접으면 나머지 카드가 그 공간을 채운다."""
+        show = not self.side.isVisible()
+        if not show:
+            self._side_sizes = self.split.sizes()      # 접기 직전 너비 기억
+        self.side.setVisible(show)
+        if show and getattr(self, "_side_sizes", None):
+            self.split.setSizes(self._side_sizes)      # 펼 때 이전 비율 복원
 
     # ---- 설정(모달) / 티어 초기화 / 환경 점검 ----
     def _open_settings(self):
@@ -851,9 +940,12 @@ class MainWindow(QMainWindow):
         split.setHandleWidth(6)
         split.setContentsMargins(8, 8, 8, 8)
 
+        self.split = split
         # 1) 탐색기
         side = QFrame()
         side.setObjectName("Side")
+        self.side = side
+        side.setMinimumWidth(170)
         sl = QVBoxLayout(side)
         sl.setContentsMargins(10, 10, 6, 10)
         t = QLabel("탐색기")
@@ -882,11 +974,21 @@ class MainWindow(QMainWindow):
         pt = QLabel("문제")
         pt.setObjectName("PanelTitle")
         pl.addWidget(pt)
+
+        # 콘텐츠 영역: 0=네이티브 문제 뷰, 1=HTML 뷰(레슨/가이드/시험/영단어)
+        self.content = QStackedWidget()
+        self.prob_view = ProblemView()
+        self.prob_view.setContextMenuPolicy(Qt.CustomContextMenu)   # 우클릭 → 힌트 메뉴
+        self.prob_view.customContextMenuRequested.connect(
+            lambda pos: self._prob_menu(pos, self.prob_view))
+        self.content.addWidget(self.prob_view)
         self.prob = QTextBrowser()
         self.prob.setOpenExternalLinks(False)
-        self.prob.setContextMenuPolicy(Qt.CustomContextMenu)        # 우클릭 → 힌트 메뉴
-        self.prob.customContextMenuRequested.connect(self._prob_menu)
-        pl.addWidget(self.prob, 1)
+        self.prob.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.prob.customContextMenuRequested.connect(
+            lambda pos: self._prob_menu(pos, self.prob))
+        self.content.addWidget(self.prob)
+        pl.addWidget(self.content, 1)
         split.addWidget(probp)
 
         # 3) 에디터 + 결과
@@ -943,6 +1045,21 @@ class MainWindow(QMainWindow):
         right.setSizes([560, 250])
         split.addWidget(right)
 
+        # 텍스트 영역(문제/console/terminal/입력)의 viewport 배경을 카드색과 정확히 일치
+        # (QSS 'background'는 viewport 까지 적용 안 되어 팔레트 Base 색이 새어 나오는 걸 방지)
+        for w in (self.prob, self.editor, self.out, self.stdin_box):
+            pal = w.palette()
+            pal.setColor(QPalette.Base, QColor(CARD))
+            pal.setColor(QPalette.Window, QColor(CARD))
+            w.setPalette(pal)
+            w.viewport().setAutoFillBackground(True)
+
+        # 반응형: 창/사이드바 변화 시 문제·에디터 영역이 비율대로 늘어나도록
+        probp.setMinimumWidth(240)
+        right.setMinimumWidth(320)
+        split.setStretchFactor(0, 0)   # 사이드바: 고정폭 유지
+        split.setStretchFactor(1, 3)   # 문제 카드
+        split.setStretchFactor(2, 5)   # 에디터+터미널
         split.setSizes([260, 420, 660])
         return split
 
@@ -1185,14 +1302,15 @@ class MainWindow(QMainWindow):
             h.append(sec("단점 · 주의점") + f"<div style='color:{ORANGE};'>{esc(l.cons)}</div>")
         if l.code:
             h.append(sec("예시 코드"))
-            h.append(f"<pre style='background:{BG2};color:{YELLOW};padding:8px 10px;border-radius:6px;"
+            h.append(f"<pre style='background:{CARD};color:{YELLOW};padding:8px 10px;"
+                     f"border:1px solid {BORDER};border-radius:6px;"
                      f"font-family:{MONO_FAMILY};font-size:12px;white-space:pre-wrap;'>"
                      f"{html.escape(l.code.rstrip())}</pre>")
             if l.lang in ("python", "java", "cpp"):
                 h.append(f"<div style='color:{COMMENT};font-size:11px;margin-top:4px;'>"
                          f"→ 아래 console 에 코드가 올라가 있어요. Run(F5) 으로 직접 실행해 보세요.</div>")
         h.append("</div>")
-        self.prob.setHtml("".join(h))
+        self._show_html(h)
 
     def _run_lesson(self):
         l = self.current_lesson
@@ -1289,7 +1407,7 @@ class MainWindow(QMainWindow):
                     h.append(f"<br><span style='color:{COMMENT};font-size:12px;'>{html.escape(w.example_kr)}</span>")
             h.append("</div>")
         h.append("</div>")
-        self.prob.setHtml("".join(h))
+        self._show_html(h)
 
     def _vocab_quiz(self, level):
         words = vocab.BY_LEVEL.get(level, [])
@@ -1402,7 +1520,7 @@ class MainWindow(QMainWindow):
         h.append(f"<div style='color:{COMMENT};margin-top:12px;'>← 사이드바 '▶ 시험' 그룹에서 문제를 골라 풀고, "
                  f"상단 <b>제출</b> 로 채점하세요. 시간이 끝나면 자동 채점됩니다.</div>")
         h.append("</div>")
-        self.prob.setHtml("".join(h))
+        self._show_html(h)
 
     def _submit_exam(self, auto=False):
         if not self.exam:
@@ -1483,75 +1601,79 @@ class MainWindow(QMainWindow):
         self.status.setText(text)
         self.status.setStyleSheet(f"color:{color};")
 
-    # 문제 HTML 렌더링
+    # 문제 렌더링 (네이티브 위젯)
     def _render_problem(self, p):
-        def esc(s):
-            return html.escape(str(s)).replace("\n", "<br>")
+        self.content.setCurrentWidget(self.prob_view)
+        v = self.prob_view
+        v.clear()
 
         # 위장: 랭크 이니셜/티어 + 주제만. 출처(style)·BOJ·'코딩테스트' 단어 제거
-        meta = [p.tier or RANK_INITIAL.get(p.rank, p.rank), p.topic]
+        meta = [m for m in (p.tier or RANK_INITIAL.get(p.rank, p.rank), p.topic) if m]
         io = "stdin · stdout" if p.type == "stdin" else f"fn {p.func_name}()"
         langs = "py · java · cpp · js" if p.type == "stdin" else "py"
 
-        def sec(title):
-            return f"<div style='color:{CYAN};font-size:13px;font-weight:bold;margin:14px 0 4px;'>{title}</div>"
+        def section(title):
+            v.add(make_label(title, CYAN, 13, bold=True), top=10)
 
-        def code(s):
-            return (f"<pre style='background:{BG2};color:{YELLOW};padding:8px 10px;"
-                    f"border-radius:6px;font-family:{MONO_FAMILY};font-size:12px;"
-                    f"white-space:pre-wrap;margin:3px 0;'>{html.escape(str(s).rstrip())}</pre>")
+        v.add(make_label(p.title, PURPLE, 18, bold=True))
+        v.add(make_label(" · ".join(str(m) for m in meta), COMMENT, 11))
+        v.add(make_label(f"{io}  ·  {langs}", COMMENT, 11))
 
-        h = [f"<div style='font-family:Segoe UI;color:{FG};font-size:13px;line-height:1.5;'>"]
-        h.append(f"<div style='color:{PURPLE};font-size:18px;font-weight:bold;'>{esc(p.title)}</div>")
-        h.append(f"<div style='color:{COMMENT};font-size:11px;margin-top:3px;'>{esc(' · '.join(meta))}</div>")
-        h.append(f"<div style='color:{COMMENT};font-size:11px;'>{esc(io)} &nbsp;·&nbsp; {esc(langs)}</div>")
-        # 제한 — 작고 깔끔하게 (⏱ 시간 / 💾 메모리)
-        h.append(
-            f"<div style='margin-top:7px;font-size:11px;'>"
-            f"<span style='color:{ORANGE};'>⏱</span> "
-            f"<span style='color:{COMMENT};'>시간</span> <b style='color:{FG};'>{p.time_limit_ms}ms</b>"
-            f"&nbsp;&nbsp;&nbsp;"
-            f"<span style='color:{CYAN};'>💾</span> "
-            f"<span style='color:{COMMENT};'>메모리</span> <b style='color:{FG};'>{p.memory_limit_mb}MB</b>"
-            f"</div>")
+        # 제한 — ⏱ 시간 / 💾 메모리
+        lim = QWidget()
+        lim.setStyleSheet("background:transparent;")
+        lh = QHBoxLayout(lim)
+        lh.setContentsMargins(0, 3, 0, 0)
+        lh.setSpacing(4)
+        for w in (make_label("⏱", ORANGE, 11, wrap=False), make_label("시간", COMMENT, 11, wrap=False),
+                  make_label(f"{p.time_limit_ms}ms", FG, 11, bold=True, wrap=False)):
+            lh.addWidget(w)
+        lh.addSpacing(14)
+        for w in (make_label("💾", CYAN, 11, wrap=False), make_label("메모리", COMMENT, 11, wrap=False),
+                  make_label(f"{p.memory_limit_mb}MB", FG, 11, bold=True, wrap=False)):
+            lh.addWidget(w)
+        lh.addStretch(1)
+        v.add(lim)
 
-        h.append(sec("Description") + f"<div>{esc(p.description)}</div>")
+        section("Description")
+        v.add(make_label(p.description, FG, 13))
         if p.input_desc:
-            h.append(sec("Input") + f"<div>{esc(p.input_desc)}</div>")
+            section("Input")
+            v.add(make_label(p.input_desc, FG, 13))
         if p.output_desc:
-            h.append(sec("Output") + f"<div>{esc(p.output_desc)}</div>")
-        h.append(sec("Examples"))
+            section("Output")
+            v.add(make_label(p.output_desc, FG, 13))
+
+        section("Examples")
         for i, ex in enumerate(p.examples, 1):
             if p.type == "stdin":
-                h.append(f"<div style='color:{COMMENT};'>in {i}</div>{code(ex['input'])}")
-                h.append(f"<div style='color:{COMMENT};'>out {i}</div>{code(ex['output'])}")
+                v.add(make_label(f"in {i}", COMMENT, 11))
+                v.add(make_codebox(ex["input"]))
+                v.add(make_label(f"out {i}", COMMENT, 11))
+                v.add(make_codebox(ex["output"]))
             else:
                 args_repr = ", ".join(repr(a) for a in ex["args"])
-                h.append(code(f"{p.func_name}({args_repr})  ->  {ex['output']!r}"))
+                v.add(make_codebox(f"{p.func_name}({args_repr})  ->  {ex['output']!r}"))
 
-        # 힌트 — 문제 하단에 누적 표시(우클릭으로 단계별 공개, 스크롤해서 봄)
+        # 힌트 — 우클릭으로 단계별 공개(누적), 스크롤해서 봄
         rv = self._reveal
         if rv >= 1:
             names = ["접근 방향", "자료구조 · 알고리즘", "거의 정답"]
-            h.append(sec("힌트"))
+            section("힌트")
             for i in range(min(rv, 3)):
                 if i < len(p.hints):
-                    h.append(f"<div style='color:{PURPLE};font-weight:bold;margin-top:8px;'>"
-                             f"힌트 {i+1} · {names[i]}</div>")
-                    h.append(f"<div style='color:{FG};'>{esc(p.hints[i])}</div>")
+                    v.add(make_label(f"힌트 {i+1} · {names[i]}", PURPLE, 13, bold=True), top=6)
+                    v.add(make_label(p.hints[i], FG, 13))
         if rv >= 4:
             lang = self.lang
             sol = {"python": p.reference_py, "java": p.reference_java, "cpp": p.reference_cpp}[lang]
             if not sol.strip():
                 lang, sol = "python", p.reference_py
-            h.append(sec("풀이 · 정답 코드"))
-            h.append(f"<div style='color:{COMMENT};margin:2px 0 6px;'>"
-                     f"힌트 1→2→3이 ‘접근 → 알고리즘 → 핵심 구현’ 풀이이고, "
-                     f"아래가 가장 정석적인 정답 코드입니다 ({runner.LANGUAGES[lang]['name']}).</div>")
-            h.append(code(sol))
-
-        h.append("</div>")
-        self.prob.setHtml("".join(h))
+            section("풀이 · 정답 코드")
+            v.add(make_label(f"힌트 1→2→3이 ‘접근 → 알고리즘 → 핵심 구현’ 풀이이고, "
+                             f"아래가 가장 정석적인 정답 코드입니다 ({runner.LANGUAGES[lang]['name']}).",
+                             COMMENT, 11))
+            v.add(make_codebox(sol))
 
     # 출력
     def _append(self, text, color=FG, bold=False):
@@ -1573,26 +1695,32 @@ class MainWindow(QMainWindow):
         self._render_problem(self._cur_active or self.current)
         QTimer.singleShot(0, self._scroll_prob_bottom)
 
+    def _show_html(self, h):
+        """HTML 화면(레슨/가이드/시험/영단어)으로 전환 + 내용 표시."""
+        self.content.setCurrentWidget(self.prob)
+        self.prob.setHtml("".join(h))
+
     def _scroll_prob_bottom(self):
-        sb = self.prob.verticalScrollBar()
+        sb = self.prob_view.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-    def _prob_menu(self, pos):
+    def _prob_menu(self, pos, widget=None):
+        widget = widget or self.prob
         if self._mode == "vocab":
-            m = QMenu(self.prob)
+            m = QMenu(widget)
             a = m.addAction("📝 퀴즈 10문제 풀기")
-            if m.exec(self.prob.mapToGlobal(pos)) == a:
+            if m.exec(widget.mapToGlobal(pos)) == a:
                 self._vocab_quiz(self.vocab_level)
             return
         if not self.current:
             return
-        m = QMenu(self.prob)
+        m = QMenu(widget)
         a1 = m.addAction("힌트 1  ·  접근 방향")
         a2 = m.addAction("힌트 2  ·  자료구조 / 알고리즘")
         a3 = m.addAction("힌트 3  ·  거의 정답")
         m.addSeparator()
         al = m.addAction("힌트 last  ·  정답 코드 + 풀이")
-        act = m.exec(self.prob.mapToGlobal(pos))
+        act = m.exec(widget.mapToGlobal(pos))
         if act == a1:
             self._reveal_hint(1)
         elif act == a2:
