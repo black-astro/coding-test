@@ -356,4 +356,139 @@ PROBLEMS = [
         ),
     ),
 
+    Problem(
+        id="bruteforce-08",
+        rank="Gold",
+        title="연구소 (바이러스 차단)",
+        style="실전",
+        topic="완전탐색+BFS",
+        type="stdin",
+        description=(
+            "N x M 연구소 지도에서 0은 빈 칸, 1은 벽, 2는 바이러스다. 빈 칸 중 정확히 3곳에 "
+            "벽을 새로 세운 뒤, 바이러스가 상하좌우로 인접한 빈 칸으로 퍼진다. 벽 3개를 가장 잘 "
+            "세웠을 때 남는 안전 영역(바이러스가 닿지 않은 빈 칸)의 최대 개수를 구하라."
+        ),
+        input_desc="첫 줄에 N M (3 ≤ N,M ≤ 8). 다음 N개의 줄에 M개의 정수(0/1/2)가 공백으로 주어진다.",
+        output_desc="벽 3개를 세운 뒤 얻을 수 있는 안전 영역의 최대 크기.",
+        examples=[
+            {"input": "7 7\n2 0 0 0 1 1 0\n0 0 1 0 1 2 0\n0 1 1 0 1 0 0\n0 1 0 0 0 0 0\n0 0 0 0 0 1 1\n0 1 0 0 0 0 0\n0 1 0 0 0 0 0", "output": "27"},
+        ],
+        hints=[
+            "빈 칸 중 3곳을 고르는 모든 조합(완전탐색)에 대해 바이러스를 퍼뜨려 안전 영역을 센다.",
+            "조합은 combinations(빈칸, 3). 각 조합마다 그 3칸을 벽으로 막고 BFS로 바이러스를 전파한 뒤 안전 칸을 카운트.",
+            "N,M ≤ 8 이라 빈칸 조합 수가 작아 완전탐색이 충분히 빠르다.",
+        ],
+        testcases=[
+            {"input": "7 7\n2 0 0 0 1 1 0\n0 0 1 0 1 2 0\n0 1 1 0 1 0 0\n0 1 0 0 0 0 0\n0 0 0 0 0 1 1\n0 1 0 0 0 0 0\n0 1 0 0 0 0 0", "output": "27"},
+            {"input": "4 6\n0 0 0 0 0 0\n1 0 0 0 0 2\n1 1 1 0 0 2\n0 0 0 0 0 2", "output": "9"},
+            {"input": "8 8\n2 0 0 0 0 0 0 2\n2 0 0 0 0 0 0 2\n2 0 0 0 0 0 0 2\n2 0 0 0 0 0 0 2\n2 0 0 0 0 0 0 2\n0 0 0 0 0 0 0 0\n0 0 0 0 0 0 0 0\n0 0 0 0 0 0 0 0", "output": "3"},
+            {"input": "3 3\n0 0 0\n0 2 0\n0 0 0", "output": "2"},
+        ],
+        reference_py=(
+            "import sys\n"
+            "from collections import deque\n"
+            "from itertools import combinations\n"
+            "d = sys.stdin.read().split()\n"
+            "idx = 0; n = int(d[idx]); m = int(d[idx+1]); idx += 2\n"
+            "g = [[int(d[idx + r*m + c]) for c in range(m)] for r in range(n)]\n"
+            "empties = [(r, c) for r in range(n) for c in range(m) if g[r][c] == 0]\n"
+            "viruses = [(r, c) for r in range(n) for c in range(m) if g[r][c] == 2]\n"
+            "best = 0\n"
+            "for walls in combinations(empties, 3):\n"
+            "    wset = set(walls)\n"
+            "    vis = [[False] * m for _ in range(n)]\n"
+            "    q = deque(viruses)\n"
+            "    for r, c in viruses: vis[r][c] = True\n"
+            "    while q:\n"
+            "        r, c = q.popleft()\n"
+            "        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):\n"
+            "            nr, nc = r + dr, c + dc\n"
+            "            if 0 <= nr < n and 0 <= nc < m and not vis[nr][nc] and g[nr][nc] == 0 and (nr, nc) not in wset:\n"
+            "                vis[nr][nc] = True; q.append((nr, nc))\n"
+            "    safe = sum(1 for r in range(n) for c in range(m) if g[r][c] == 0 and (r, c) not in wset and not vis[r][c])\n"
+            "    best = max(best, safe)\n"
+            "print(best)\n"
+        ),
+        reference_java=(
+            "import java.util.*;\n"
+            "import java.io.*;\n"
+            "public class Main {\n"
+            "    static int n, m; static int[][] g;\n"
+            "    public static void main(String[] args) throws IOException {\n"
+            "        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));\n"
+            "        StreamTokenizer st = new StreamTokenizer(br);\n"
+            "        st.nextToken(); n = (int) st.nval; st.nextToken(); m = (int) st.nval;\n"
+            "        g = new int[n][m];\n"
+            "        List<int[]> empties = new ArrayList<>(), viruses = new ArrayList<>();\n"
+            "        for (int r = 0; r < n; r++) for (int c = 0; c < m; c++) {\n"
+            "            st.nextToken(); g[r][c] = (int) st.nval;\n"
+            "            if (g[r][c] == 0) empties.add(new int[]{r, c});\n"
+            "            else if (g[r][c] == 2) viruses.add(new int[]{r, c});\n"
+            "        }\n"
+            "        int E = empties.size(), best = 0;\n"
+            "        int[] dr = {1, -1, 0, 0}, dc = {0, 0, 1, -1};\n"
+            "        for (int i = 0; i < E; i++) for (int j = i + 1; j < E; j++) for (int k = j + 1; k < E; k++) {\n"
+            "            boolean[][] wall = new boolean[n][m];\n"
+            "            for (int[] w : new int[][]{empties.get(i), empties.get(j), empties.get(k)}) wall[w[0]][w[1]] = true;\n"
+            "            boolean[][] vis = new boolean[n][m];\n"
+            "            ArrayDeque<int[]> q = new ArrayDeque<>();\n"
+            "            for (int[] v : viruses) { vis[v[0]][v[1]] = true; q.add(v); }\n"
+            "            while (!q.isEmpty()) { int[] cur = q.poll();\n"
+            "                for (int t = 0; t < 4; t++) { int nr = cur[0] + dr[t], nc = cur[1] + dc[t];\n"
+            "                    if (nr >= 0 && nr < n && nc >= 0 && nc < m && !vis[nr][nc] && g[nr][nc] == 0 && !wall[nr][nc]) {\n"
+            "                        vis[nr][nc] = true; q.add(new int[]{nr, nc}); } }\n"
+            "            }\n"
+            "            int safe = 0;\n"
+            "            for (int r = 0; r < n; r++) for (int c = 0; c < m; c++)\n"
+            "                if (g[r][c] == 0 && !wall[r][c] && !vis[r][c]) safe++;\n"
+            "            best = Math.max(best, safe);\n"
+            "        }\n"
+            "        System.out.println(best);\n"
+            "    }\n"
+            "}\n"
+        ),
+        reference_cpp=(
+            "#include <bits/stdc++.h>\n"
+            "using namespace std;\n"
+            "int n, m, g[8][8];\n"
+            "int main(){\n"
+            "    scanf(\"%d %d\", &n, &m);\n"
+            "    vector<pair<int,int>> empties, viruses;\n"
+            "    for (int r = 0; r < n; r++) for (int c = 0; c < m; c++) {\n"
+            "        scanf(\"%d\", &g[r][c]);\n"
+            "        if (g[r][c] == 0) empties.push_back({r, c});\n"
+            "        else if (g[r][c] == 2) viruses.push_back({r, c});\n"
+            "    }\n"
+            "    int E = empties.size(), best = 0;\n"
+            "    int dr[] = {1, -1, 0, 0}, dc[] = {0, 0, 1, -1};\n"
+            "    for (int i = 0; i < E; i++) for (int j = i + 1; j < E; j++) for (int k = j + 1; k < E; k++) {\n"
+            "        bool wall[8][8] = {false}, vis[8][8] = {false};\n"
+            "        wall[empties[i].first][empties[i].second] = true;\n"
+            "        wall[empties[j].first][empties[j].second] = true;\n"
+            "        wall[empties[k].first][empties[k].second] = true;\n"
+            "        queue<pair<int,int>> q;\n"
+            "        for (auto& v : viruses) { vis[v.first][v.second] = true; q.push(v); }\n"
+            "        while (!q.empty()) { auto cur = q.front(); q.pop();\n"
+            "            for (int t = 0; t < 4; t++) { int nr = cur.first + dr[t], nc = cur.second + dc[t];\n"
+            "                if (nr >= 0 && nr < n && nc >= 0 && nc < m && !vis[nr][nc] && g[nr][nc] == 0 && !wall[nr][nc]) {\n"
+            "                    vis[nr][nc] = true; q.push({nr, nc}); } }\n"
+            "        }\n"
+            "        int safe = 0;\n"
+            "        for (int r = 0; r < n; r++) for (int c = 0; c < m; c++)\n"
+            "            if (g[r][c] == 0 && !wall[r][c] && !vis[r][c]) safe++;\n"
+            "        best = max(best, safe);\n"
+            "    }\n"
+            "    printf(\"%d\\n\", best);\n"
+            "    return 0;\n"
+            "}\n"
+        ),
+        template_py=(
+            "import sys\n"
+            "from itertools import combinations\n"
+            "from collections import deque\n"
+            "d = sys.stdin.read().split()\n"
+            "# 첫 줄 N M, 다음 격자(0빈칸/1벽/2바이러스). 벽 3개로 최대 안전영역.\n"
+        ),
+    ),
+
 ]

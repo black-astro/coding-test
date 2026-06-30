@@ -537,4 +537,214 @@ PROBLEMS = [
         ),
     ),
 
+    Problem(
+        id="bfs-06",
+        rank="Silver",
+        title="미로 최단 경로 칸수",
+        style="실전",
+        topic="BFS 최단거리",
+        type="stdin",
+        description=(
+            "N x M 격자 미로가 주어진다. 1은 지날 수 있는 칸, 0은 벽이다. "
+            "왼쪽 위 (1,1)에서 오른쪽 아래 (N,M)까지 상하좌우로만 이동할 때, "
+            "지나는 칸 수(시작과 끝 포함)의 최솟값을 구하라. (1,1)과 (N,M)은 항상 1이며 도달 가능하다."
+        ),
+        input_desc="첫 줄에 N M (1 ≤ N,M ≤ 100). 다음 N개의 줄에 0/1 로 이루어진 길이 M 의 문자열.",
+        output_desc="(1,1)에서 (N,M)까지 최소로 지나는 칸 수.",
+        examples=[
+            {"input": "4 6\n101111\n101010\n101011\n111011", "output": "15"},
+            {"input": "2 2\n11\n11", "output": "3"},
+        ],
+        hints=[
+            "모든 칸의 가중치가 같으니 BFS 로 최단거리를 구한다.",
+            "거리 배열 dist 를 방문 표시 겸용으로 두고, (0,0)에서 dist=1 로 시작해 BFS.",
+            "큐에서 꺼낸 칸의 네 방향 중 '1' 이고 아직 방문 안 한 칸을 dist+1 로 갱신하며 넣는다. 답은 dist[N-1][M-1].",
+        ],
+        testcases=[
+            {"input": "4 6\n101111\n101010\n101011\n111011", "output": "15"},
+            {"input": "2 2\n11\n11", "output": "3"},
+            {"input": "1 1\n1", "output": "1"},
+            {"input": "3 3\n111\n111\n111", "output": "5"},
+            {"input": "1 5\n11111", "output": "5"},
+            {"input": "5 5\n11111\n00001\n11111\n10000\n11111", "output": "17"},
+        ],
+        reference_py=(
+            "import sys\n"
+            "from collections import deque\n"
+            "d = sys.stdin.read().split()\n"
+            "n, m = int(d[0]), int(d[1])\n"
+            "g = [d[2 + i] for i in range(n)]\n"
+            "dist = [[0] * m for _ in range(n)]\n"
+            "q = deque([(0, 0)]); dist[0][0] = 1\n"
+            "while q:\n"
+            "    x, y = q.popleft()\n"
+            "    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):\n"
+            "        nx, ny = x + dx, y + dy\n"
+            "        if 0 <= nx < n and 0 <= ny < m and g[nx][ny] == '1' and dist[nx][ny] == 0:\n"
+            "            dist[nx][ny] = dist[x][y] + 1; q.append((nx, ny))\n"
+            "print(dist[n - 1][m - 1])\n"
+        ),
+        reference_java=(
+            "import java.util.*;\n"
+            "import java.io.*;\n"
+            "public class Main {\n"
+            "    public static void main(String[] args) throws IOException {\n"
+            "        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));\n"
+            "        StringTokenizer st = new StringTokenizer(br.readLine());\n"
+            "        int n = Integer.parseInt(st.nextToken()), m = Integer.parseInt(st.nextToken());\n"
+            "        char[][] g = new char[n][];\n"
+            "        for (int i = 0; i < n; i++) g[i] = br.readLine().trim().toCharArray();\n"
+            "        int[][] dist = new int[n][m];\n"
+            "        ArrayDeque<int[]> q = new ArrayDeque<>(); q.add(new int[]{0, 0}); dist[0][0] = 1;\n"
+            "        int[] dx = {1, -1, 0, 0}, dy = {0, 0, 1, -1};\n"
+            "        while (!q.isEmpty()) {\n"
+            "            int[] c = q.poll();\n"
+            "            for (int k = 0; k < 4; k++) {\n"
+            "                int nx = c[0] + dx[k], ny = c[1] + dy[k];\n"
+            "                if (nx >= 0 && nx < n && ny >= 0 && ny < m && g[nx][ny] == '1' && dist[nx][ny] == 0) {\n"
+            "                    dist[nx][ny] = dist[c[0]][c[1]] + 1; q.add(new int[]{nx, ny});\n"
+            "                }\n"
+            "            }\n"
+            "        }\n"
+            "        System.out.println(dist[n - 1][m - 1]);\n"
+            "    }\n"
+            "}\n"
+        ),
+        reference_cpp=(
+            "#include <bits/stdc++.h>\n"
+            "using namespace std;\n"
+            "int main(){\n"
+            "    int n, m; scanf(\"%d %d\", &n, &m);\n"
+            "    vector<string> g(n);\n"
+            "    for (int i = 0; i < n; i++) { char buf[105]; scanf(\"%s\", buf); g[i] = buf; }\n"
+            "    vector<vector<int>> dist(n, vector<int>(m, 0));\n"
+            "    queue<pair<int,int>> q; q.push({0, 0}); dist[0][0] = 1;\n"
+            "    int dx[] = {1, -1, 0, 0}, dy[] = {0, 0, 1, -1};\n"
+            "    while (!q.empty()) {\n"
+            "        auto pr = q.front(); q.pop(); int x = pr.first, y = pr.second;\n"
+            "        for (int k = 0; k < 4; k++) { int nx = x + dx[k], ny = y + dy[k];\n"
+            "            if (nx >= 0 && nx < n && ny >= 0 && ny < m && g[nx][ny] == '1' && dist[nx][ny] == 0) {\n"
+            "                dist[nx][ny] = dist[x][y] + 1; q.push({nx, ny}); }\n"
+            "        }\n"
+            "    }\n"
+            "    printf(\"%d\\n\", dist[n - 1][m - 1]);\n"
+            "    return 0;\n"
+            "}\n"
+        ),
+        template_py=(
+            "import sys\n"
+            "from collections import deque\n"
+            "d = sys.stdin.read().split()\n"
+            "# 첫 줄 N M, 다음 N줄 0/1 미로. (1,1)→(N,M) 최소 칸 수를 BFS로.\n"
+        ),
+    ),
+
+    Problem(
+        id="bfs-07",
+        rank="Gold",
+        title="트리의 지름",
+        style="실전",
+        topic="트리",
+        type="stdin",
+        description=(
+            "가중치 있는 트리에서 가장 먼 두 노드 사이의 거리(트리의 지름)를 구하라. "
+            "트리는 N개의 노드와 N-1개의 간선으로 이루어진다."
+        ),
+        input_desc=(
+            "첫 줄에 노드 수 N (1 ≤ N ≤ 100,000). 다음 N-1개의 줄에 a b w "
+            "(a와 b를 잇는 가중치 w 간선, 1 ≤ w ≤ 10,000). 노드 번호는 1..N."
+        ),
+        output_desc="트리의 지름(가장 먼 두 노드 사이의 거리).",
+        examples=[
+            {"input": "5\n1 2 3\n1 3 4\n2 4 5\n4 5 6", "output": "18"},
+            {"input": "2\n1 2 5", "output": "5"},
+        ],
+        hints=[
+            "임의의 노드에서 가장 먼 노드 u를 찾고, u에서 가장 먼 노드까지의 거리가 곧 지름이다(탐색 2회).",
+            "가중치가 있으므로 BFS로 거리를 누적하거나 DFS로 최대 거리를 구한다.",
+            "bfs(1)→u, bfs(u)의 최대 거리 = 지름. N이 크니 재귀 DFS 스택 한계에 주의(반복 BFS 권장).",
+        ],
+        testcases=[
+            {"input": "12\n1 2 3\n1 3 2\n2 4 5\n3 5 11\n3 6 9\n4 7 1\n4 8 7\n5 9 15\n5 10 4\n6 11 6\n6 12 10", "output": "45"},
+            {"input": "1", "output": "0"},
+            {"input": "2\n1 2 5", "output": "5"},
+            {"input": "3\n1 2 3\n1 3 4", "output": "7"},
+            {"input": "4\n1 2 1\n2 3 2\n3 4 3", "output": "6"},
+            {"input": "5\n1 2 3\n1 3 4\n2 4 5\n4 5 6", "output": "18"},
+        ],
+        reference_py=(
+            "import sys\n"
+            "from collections import deque\n"
+            "d = sys.stdin.read().split()\n"
+            "i = 0; n = int(d[i]); i += 1\n"
+            "adj = [[] for _ in range(n + 1)]\n"
+            "for _ in range(n - 1):\n"
+            "    a, b, w = int(d[i]), int(d[i+1]), int(d[i+2]); i += 3\n"
+            "    adj[a].append((b, w)); adj[b].append((a, w))\n"
+            "def bfs(s):\n"
+            "    dist = [-1] * (n + 1); dist[s] = 0; q = deque([s]); far = s\n"
+            "    while q:\n"
+            "        u = q.popleft()\n"
+            "        for v, w in adj[u]:\n"
+            "            if dist[v] < 0:\n"
+            "                dist[v] = dist[u] + w; q.append(v)\n"
+            "                if dist[v] > dist[far]: far = v\n"
+            "    return far, dist[far]\n"
+            "u, _ = bfs(1); _, dm = bfs(u)\n"
+            "print(dm)\n"
+        ),
+        reference_java=(
+            "import java.util.*;\n"
+            "import java.io.*;\n"
+            "public class Main {\n"
+            "    static List<int[]>[] adj; static int n;\n"
+            "    static int[] bfs(int s) {\n"
+            "        int[] dist = new int[n + 1]; Arrays.fill(dist, -1); dist[s] = 0;\n"
+            "        ArrayDeque<Integer> q = new ArrayDeque<>(); q.add(s); int far = s;\n"
+            "        while (!q.isEmpty()) { int u = q.poll();\n"
+            "            for (int[] e : adj[u]) { int v = e[0], w = e[1];\n"
+            "                if (dist[v] < 0) { dist[v] = dist[u] + w; q.add(v); if (dist[v] > dist[far]) far = v; } }\n"
+            "        }\n"
+            "        return new int[]{far, dist[far]};\n"
+            "    }\n"
+            "    public static void main(String[] args) throws IOException {\n"
+            "        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));\n"
+            "        StreamTokenizer st = new StreamTokenizer(br);\n"
+            "        st.nextToken(); n = (int) st.nval;\n"
+            "        adj = new List[n + 1]; for (int i = 1; i <= n; i++) adj[i] = new ArrayList<>();\n"
+            "        for (int i = 0; i < n - 1; i++) {\n"
+            "            st.nextToken(); int a = (int) st.nval; st.nextToken(); int b = (int) st.nval; st.nextToken(); int w = (int) st.nval;\n"
+            "            adj[a].add(new int[]{b, w}); adj[b].add(new int[]{a, w});\n"
+            "        }\n"
+            "        int u = bfs(1)[0]; System.out.println(bfs(u)[1]);\n"
+            "    }\n"
+            "}\n"
+        ),
+        reference_cpp=(
+            "#include <bits/stdc++.h>\n"
+            "using namespace std;\n"
+            "int n; vector<pair<int,int>> adj[100005];\n"
+            "pair<int,int> bfs(int s){\n"
+            "    vector<int> dist(n + 1, -1); dist[s] = 0; queue<int> q; q.push(s); int far = s;\n"
+            "    while (!q.empty()) { int u = q.front(); q.pop();\n"
+            "        for (auto& e : adj[u]) { int v = e.first, w = e.second;\n"
+            "            if (dist[v] < 0) { dist[v] = dist[u] + w; q.push(v); if (dist[v] > dist[far]) far = v; } }\n"
+            "    }\n"
+            "    return {far, dist[far]};\n"
+            "}\n"
+            "int main(){\n"
+            "    scanf(\"%d\", &n);\n"
+            "    for (int i = 0; i < n - 1; i++) { int a, b, w; scanf(\"%d %d %d\", &a, &b, &w); adj[a].push_back({b, w}); adj[b].push_back({a, w}); }\n"
+            "    int u = bfs(1).first; printf(\"%d\\n\", bfs(u).second);\n"
+            "    return 0;\n"
+            "}\n"
+        ),
+        template_py=(
+            "import sys\n"
+            "from collections import deque\n"
+            "d = sys.stdin.read().split()\n"
+            "# 첫 값 N, 이후 N-1개의 (a b w) 간선. 트리의 지름을 출력(2회 BFS).\n"
+        ),
+    ),
+
 ]
