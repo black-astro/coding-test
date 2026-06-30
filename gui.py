@@ -9,6 +9,7 @@
 """
 
 import sys
+import re
 import html
 import time
 import random
@@ -28,9 +29,10 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QDialog, QProgressBar, QCheckBox, QComboBox,
                                QStackedWidget, QScrollArea, QSystemTrayIcon, QSlider,
                                QStyle, QStyleOptionSlider, QLineEdit,
-                               QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect)
+                               QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
+                               QTabWidget)
 
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.1.5"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -139,8 +141,9 @@ TERM_BG = "#1d1f29"   # 터미널 카드 — 콘솔보다 살짝 더 진하게
 CODE_FAMILY = "Cascadia Code"
 MONO_FAMILY = "Consolas"
 
-# 티어(5~1) 색상 — 1이 가장 높고 눈에 띄게(빨강), 5가 가장 낮음(회색)
-TIER_COLOR = {5: "#8a93b3", 4: "#50fa7b", 3: "#f1fa8c", 2: "#ffb86c", 1: "#ff5555"}
+# 티어(5~1) 색상 — 1이 가장 높고 눈에 띄게(빨강), 5가 가장 낮음(회색).
+# 초록(해결 표시)과 겹치지 않도록 4=연한 하늘색, 3=하늘색(4와 연결되는 파랑 계열).
+TIER_COLOR = {5: "#8a93b3", 4: "#9bd6ff", 3: "#ffe46b", 2: "#ff9e42", 1: "#ff5555"}
 
 # ─────────────────────────────────────────────────────────────────
 #  테마 커스터마이즈 — 여기 값만 바꾸면 프로그램 헤더 색이 바뀐다.
@@ -257,6 +260,12 @@ QMenu::separator {{ height:1px; background:{CUR}; margin:4px 8px; }}
 
 /* 다이얼로그/메시지 — 프로그램 헤더 색과 동기화(헤더보다 살짝 밝게 '연하게') */
 QDialog {{ background:{DIALOG_BG}; }}
+QTabWidget::pane {{ border:1px solid {BORDER}; border-radius:6px; background:transparent; top:-1px; }}
+QTabBar {{ background:transparent; }}
+QTabBar::tab {{ background:{BG2}; color:{COMMENT}; padding:7px 16px; border:1px solid {BORDER};
+    border-bottom:none; border-top-left-radius:6px; border-top-right-radius:6px; margin-right:2px; }}
+QTabBar::tab:selected {{ background:{DIALOG_BG}; color:{CYAN}; }}
+QTabBar::tab:hover {{ color:{FG}; }}
 QMessageBox {{ background:{DIALOG_BG}; }}
 QMessageBox QLabel {{ background:transparent; color:{FG}; }}
 """
@@ -481,9 +490,17 @@ def pos_kr(pos):
     return " · ".join(POS_KR.get(x.strip(), x.strip()) for x in str(pos).split("/"))
 
 
+def drill_sample(words, cap=30):
+    """학습 문항 추출 — 50개 이하면 전부(셔플), 초과(전체 레벨 등)면 cap 개 랜덤."""
+    pool = list(words)
+    n = len(pool) if len(pool) <= 50 else cap
+    return random.sample(pool, n)
+
+
 # 트리 아이템 커스텀 데이터 롤
 ROLE_TIER = Qt.UserRole + 2      # 티어 번호(1~5) 또는 None
 ROLE_SOLVED = Qt.UserRole + 3    # 해결 여부
+ROLE_LOCKED = Qt.UserRole + 4    # 상위 랭크 잠김 여부
 
 
 class TierDelegate(QStyledItemDelegate):
@@ -506,26 +523,28 @@ class TierDelegate(QStyledItemDelegate):
         fm = painter.fontMetrics()
         selected = bool(opt.state & QStyle.State_Selected)
 
+        locked = bool(index.data(ROLE_LOCKED))
         tag = f"T{tnum}"
         tag_w = fm.horizontalAdvance(tag)
-        painter.setPen(QColor(TIER_COLOR.get(tnum, FG)))
+        tcol = QColor(TIER_COLOR.get(tnum, FG))
+        if locked:
+            tcol.setAlpha(110)
+        painter.setPen(tcol)
         painter.drawText(QRect(r.left(), r.top(), tag_w + 4, r.height()),
                          Qt.AlignVCenter | Qt.AlignLeft, tag)
 
         x = r.left() + tag_w + 8
-        solved = bool(index.data(ROLE_SOLVED))
-        check_w = 16 if solved else 0
-        avail = max(0, r.right() - x - check_w - 2)
+        lock_w = 16 if locked else 0
+        avail = max(0, r.right() - x - lock_w - 2)
         title = index.data(Qt.DisplayRole) or ""
-        painter.setPen(QColor(CYAN if selected else FG))
+        painter.setPen(QColor(COMMENT if locked else (CYAN if selected else FG)))
         painter.drawText(QRect(x, r.top(), avail, r.height()),
                          Qt.AlignVCenter | Qt.AlignLeft,
                          fm.elidedText(str(title), Qt.ElideRight, avail))
-
-        if solved:
-            painter.setPen(QColor(GREEN))
-            painter.drawText(QRect(r.right() - check_w, r.top(), check_w, r.height()),
-                             Qt.AlignVCenter | Qt.AlignRight, "✓")
+        if locked:
+            painter.setPen(QColor(COMMENT))
+            painter.drawText(QRect(r.right() - lock_w, r.top(), lock_w, r.height()),
+                             Qt.AlignVCenter | Qt.AlignRight, "🔒")
         painter.restore()
 
 
@@ -765,20 +784,30 @@ class TypingDrillWidget(QWidget):
         self.stop_btn = QPushButton("그만하기 (결과 보기)")
         self.stop_btn.setObjectName("Run")
         self.stop_btn.clicked.connect(self._finish)
+        self.quit_btn = QPushButton("종료")
+        self.quit_btn.setObjectName("Ghost")
+        self.quit_btn.clicked.connect(self._quit)
         self.close_btn = QPushButton("닫기")
         self.close_btn.setObjectName("Run")
-        self.close_btn.clicked.connect(self.finished.emit)
+        self.close_btn.clicked.connect(self._quit)
         self.close_btn.setVisible(False)
         row.addWidget(self.skip_btn)
         row.addStretch(1)
         row.addWidget(self.stop_btn)
+        row.addWidget(self.quit_btn)
         row.addWidget(self.close_btn)
         lay.addLayout(row)
+        # 우측 하단 투명도 바에 버튼이 가리지 않도록 아래 여백 확보
+        lay.addSpacing(34)
+
+    def _quit(self):
+        self._stop_timer()
+        self.finished.emit()
 
     def start(self, words, db):
         """단어 묶음으로 드릴 시작/재시작."""
         self.db = db
-        self.words = random.sample(list(words), len(words))
+        self.words = drill_sample(words)
         self.idx = 0
         self.score = 0
         self.results = []
@@ -787,6 +816,7 @@ class TypingDrillWidget(QWidget):
         self.result_view.setVisible(False)
         self.skip_btn.setVisible(True)
         self.stop_btn.setVisible(True)
+        self.quit_btn.setVisible(True)
         self.close_btn.setVisible(False)
         self._next()
 
@@ -865,6 +895,7 @@ class TypingDrillWidget(QWidget):
         self.feedback.setVisible(False)
         self.skip_btn.setVisible(False)
         self.stop_btn.setVisible(False)
+        self.quit_btn.setVisible(False)
         self.close_btn.setVisible(True)
         n = len(self.results)
         correct = sum(1 for _, _, ok in self.results if ok)
@@ -883,15 +914,253 @@ class TypingDrillWidget(QWidget):
         self.result_view.setVisible(True)
 
 
-class TypingDrillDialog(QDialog):
-    """타이핑 암기를 독립 창(모달)으로 — 트레이/메인창 숨김 상태에서 단독 실행용.
+class SentenceDrillWidget(QWidget):
+    """문장 완성 — 빈칸이 있는 예문을 주고 알맞은 단어를 타이핑.
+    엔터로 채점(O/X), 정답이면 '다음'으로 넘어갈지 묻고, 오답이면 맞출 때까지 재시도."""
+
+    finished = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.db = None
+        self.items = []            # (word, prompt or None)
+        self.idx = 0
+        self.results = []          # (word, ok)
+        self.solved_current = False
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setSpacing(10)
+
+        self.progress = QLabel("")
+        self.progress.setAlignment(Qt.AlignCenter)
+        self.progress.setStyleSheet(f"color:{COMMENT}; font-size:12px;")
+        lay.addWidget(self.progress)
+
+        self.card = QFrame()
+        self.card.setObjectName("DrillCard")
+        cl = QVBoxLayout(self.card)
+        cl.setContentsMargins(18, 20, 18, 20)
+        cl.setSpacing(12)
+        cl.addStretch(1)
+        self.mark = QLabel("")
+        self.mark.setAlignment(Qt.AlignCenter)
+        self.mark.setStyleSheet("font-size:40px; font-weight:bold;")
+        # 한글 번역문 — 이걸 보고 빈칸에 들어갈 단어를 떠올린다
+        self.translation = QLabel("")
+        self.translation.setAlignment(Qt.AlignCenter)
+        self.translation.setWordWrap(True)
+        self.translation.setStyleSheet(f"color:{FG}; font-size:18px; font-weight:bold;")
+        self.sentence = QLabel("")
+        self.sentence.setAlignment(Qt.AlignCenter)
+        self.sentence.setWordWrap(True)
+        self.sentence.setStyleSheet(f"color:{CYAN}; font-size:15px;")
+        self.hint = QLabel("")
+        self.hint.setAlignment(Qt.AlignCenter)
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet(f"color:{COMMENT}; font-size:13px;")
+        # 힌트로 드러나는 단어 일부 — 약한 블러로 희미하게
+        self.reveal = QLabel("")
+        self.reveal.setAlignment(Qt.AlignCenter)
+        self.reveal.setStyleSheet(f"color:{CYAN}; font-size:22px; font-weight:bold; letter-spacing:3px;")
+        self._reveal_blur = QGraphicsBlurEffect(self)
+        self._reveal_blur.setBlurRadius(2.2)
+        self.reveal.setGraphicsEffect(self._reveal_blur)
+        cl.addWidget(self.mark)
+        cl.addWidget(self.translation)
+        cl.addWidget(self.sentence)
+        cl.addWidget(self.reveal)
+        cl.addWidget(self.hint)
+        cl.addStretch(1)
+        lay.addWidget(self.card, 1)
+
+        self.input = QLineEdit()
+        self.input.setPlaceholderText("빈칸에 들어갈 영어 단어를 입력 후 Enter")
+        self.input.setStyleSheet(f"background:{BG2}; color:{FG}; border:1px solid {BORDER};"
+                                 f" border-radius:6px; padding:8px; font-size:15px;")
+        self.input.returnPressed.connect(self._enter)
+        lay.addWidget(self.input)
+
+        self.result_view = QTextBrowser()
+        self.result_view.setVisible(False)
+        self.result_view.setStyleSheet(f"background:{CARD}; border:none;")
+        pal = self.result_view.palette()
+        pal.setColor(QPalette.Base, QColor(CARD))
+        self.result_view.setPalette(pal)
+        lay.addWidget(self.result_view, 1)
+
+        row = QHBoxLayout()
+        self.hint_btn = QPushButton("힌트")
+        self.hint_btn.setObjectName("Ghost")
+        self.hint_btn.clicked.connect(self._show_hint)
+        self.skip_btn = QPushButton("건너뛰기")
+        self.skip_btn.setObjectName("Ghost")
+        self.skip_btn.clicked.connect(self._skip)
+        self.next_btn = QPushButton("다음 ▶")
+        self.next_btn.setObjectName("Run")
+        self.next_btn.clicked.connect(self._go_next)
+        self.next_btn.setVisible(False)
+        self.quit_btn = QPushButton("종료")
+        self.quit_btn.setObjectName("Ghost")
+        self.quit_btn.clicked.connect(self._quit)
+        self.close_btn = QPushButton("닫기")
+        self.close_btn.setObjectName("Run")
+        self.close_btn.clicked.connect(self._quit)
+        self.close_btn.setVisible(False)
+        row.addWidget(self.hint_btn)
+        row.addWidget(self.skip_btn)
+        row.addStretch(1)
+        row.addWidget(self.next_btn)
+        row.addWidget(self.quit_btn)
+        row.addWidget(self.close_btn)
+        lay.addLayout(row)
+        lay.addSpacing(34)
+
+    def _quit(self):
+        self.finished.emit()
+
+    def _show_hint(self):
+        """단어 일부를 단계적으로(약 1/3씩) 드러낸다 — 약한 블러로 희미하게."""
+        if self.solved_current or self.idx >= len(self.items):
+            return
+        word = self.items[self.idx][0].word
+        self.hint_level = min(3, getattr(self, "hint_level", 0) + 1)
+        k = max(1, round(len(word) * self.hint_level / 3))
+        shown = word[:k]
+        rest = "·" * (len(word) - k)
+        pct = round(k / len(word) * 100)
+        self.reveal.setText(shown + rest)
+        self.hint_btn.setText(f"힌트 ({pct}%)")
+        # 더 드러날수록 블러를 살짝 옅게
+        self._reveal_blur.setBlurRadius(max(0.6, 2.6 - self.hint_level * 0.7))
+
+    @staticmethod
+    def _blank(word, example):
+        if example:
+            pat = re.compile(r"\b" + re.escape(word) + r"\b", re.IGNORECASE)
+            if pat.search(example):
+                return pat.sub("_____", example, count=1)
+        return None
+
+    def start(self, words, db):
+        self.db = db
+        self.items = [(w, self._blank(w.word, w.example))
+                      for w in drill_sample(words)]
+        self.idx = 0
+        self.results = []
+        self.card.setVisible(True)
+        self.input.setVisible(True)
+        self.result_view.setVisible(False)
+        self.skip_btn.setVisible(True)
+        self.hint_btn.setVisible(True)
+        self.quit_btn.setVisible(True)
+        self.next_btn.setVisible(False)
+        self.close_btn.setVisible(False)
+        self._next()
+
+    def _next(self):
+        if self.idx >= len(self.items):
+            self._finish()
+            return
+        self.solved_current = False
+        w, prompt = self.items[self.idx]
+        self.progress.setText(f"{self.idx + 1} / {len(self.items)}")
+        self.mark.setText("")
+        if prompt:
+            # 한글 번역(맥락)을 보고, 영어 빈칸 문장을 완성
+            self.translation.setText(w.example_kr or "")
+            self.sentence.setText(prompt)
+            self.hint.setText("한글 뜻을 보고 빈칸에 들어갈 영어 단어를 입력하세요"
+                              if w.example_kr else "빈칸에 들어갈 영어 단어를 입력하세요")
+        else:
+            self.translation.setText(f"“{w.meaning}”")
+            self.sentence.setText("위 뜻에 해당하는 영어 단어를 입력하세요")
+            self.hint.setText("")
+        self.input.clear()
+        self.input.setEnabled(True)
+        self.input.setFocus()
+        self.skip_btn.setVisible(True)
+        self.hint_btn.setVisible(True)
+        self.hint_btn.setText("힌트")
+        self.hint_level = 0
+        self.reveal.setText("")
+        self.next_btn.setVisible(False)
+
+    def _enter(self):
+        if self.solved_current or self.idx >= len(self.items):
+            return
+        typed = self.input.text().strip()
+        if not typed:
+            return
+        w, _ = self.items[self.idx]
+        if typed.lower() == w.word.lower():
+            self.solved_current = True
+            self.mark.setStyleSheet(f"color:{GREEN}; font-size:40px; font-weight:bold;")
+            self.mark.setText("O")
+            self.input.setEnabled(False)
+            self.hint.setText("정답!  다음 문제로 넘어갈까요?  (Enter 또는 '다음')")
+            self.reveal.setText("")
+            self.skip_btn.setVisible(False)
+            self.hint_btn.setVisible(False)
+            self.next_btn.setVisible(True)
+            self.next_btn.setFocus()
+        else:
+            self.mark.setStyleSheet(f"color:{RED}; font-size:40px; font-weight:bold;")
+            self.mark.setText("X")
+            self.input.selectAll()           # 맞출 때까지 다시 입력
+            self.input.setFocus()
+
+    def _go_next(self):
+        if self.idx < len(self.items):
+            w, _ = self.items[self.idx]
+            if self.db:
+                self.db.record(w.word, True)
+            self.results.append((w, True))
+        self.idx += 1
+        self._next()
+
+    def _skip(self):
+        if self.idx < len(self.items):
+            w, _ = self.items[self.idx]
+            if self.db:
+                self.db.record(w.word, False)
+            self.results.append((w, False))
+        self.idx += 1
+        self._next()
+
+    def _finish(self):
+        self.card.setVisible(False)
+        self.input.setVisible(False)
+        self.skip_btn.setVisible(False)
+        self.hint_btn.setVisible(False)
+        self.next_btn.setVisible(False)
+        self.quit_btn.setVisible(False)
+        self.close_btn.setVisible(True)
+        n = len(self.results)
+        correct = sum(1 for _, ok in self.results if ok)
+        self.progress.setText("문장 완성 종료")
+        h = [f"<div style='font-family:Segoe UI;color:{FG};font-size:13px;line-height:1.6;'>"]
+        h.append(f"<div style='color:{PURPLE};font-size:18px;font-weight:bold;'>결과 — {correct} / {n} 맞춤</div><br>")
+        if not self.results:
+            h.append(f"<div style='color:{COMMENT};'>푼 문제가 없습니다.</div>")
+        for w, ok in self.results:
+            mark = "✅" if ok else "⏭"
+            h.append(f"<div style='margin:3px 0;'>{mark} <b style='color:{CYAN};'>{html.escape(w.word)}</b> "
+                     f"<span style='color:{COMMENT};'>{html.escape(w.meaning)}</span></div>")
+        h.append("</div>")
+        self.result_view.setHtml("".join(h))
+        self.result_view.setVisible(True)
+
+
+class DrillDialog(QDialog):
+    """영단어 학습(깜빡임/문장 완성)을 독립 창(모달)으로 — 트레이/메인창 숨김 상태에서 단독 실행용.
     창 투명도 조절 슬라이더 포함."""
 
-    def __init__(self, parent, words, db):
+    def __init__(self, parent, drill, words, db, title="영단어 학습"):
         super().__init__(parent)
-        self.setWindowTitle("영단어 타이핑 암기")
+        self.setWindowTitle(title)
         self.setWindowIcon(app_icon())
-        self.resize(420, 370)
+        self.resize(440, 400)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
@@ -911,7 +1180,7 @@ class TypingDrillDialog(QDialog):
         top.addWidget(self.op)
         lay.addLayout(top)
 
-        self.drill = TypingDrillWidget()
+        self.drill = drill
         self.drill.finished.connect(self.accept)
         lay.addWidget(self.drill, 1)
         self.drill.start(words, db)
@@ -923,48 +1192,51 @@ class SettingsDialog(QDialog):
     def __init__(self, parent, settings):
         super().__init__(parent)
         self.setWindowTitle("설정")
-        self.resize(500, 620)
+        self.resize(640, 540)
         self.s = settings
         self.win = parent
         self._checks = {}      # key -> QCheckBox
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("background:transparent;")
-        scroll.viewport().setStyleSheet("background:transparent;")
-        body = QWidget()
-        body.setStyleSheet("background:transparent;")
-        lay = QVBoxLayout(body)
-        lay.setContentsMargins(22, 20, 22, 16)
-        lay.setSpacing(7)
-        scroll.setWidget(body)
-        outer.addWidget(scroll, 1)
+        outer.setContentsMargins(12, 12, 12, 8)
+        outer.setSpacing(8)
+        tabs = QTabWidget()
+        outer.addWidget(tabs, 1)
 
-        def title(t):
-            l = QLabel(t)
-            l.setStyleSheet(f"color:{PURPLE};font-weight:bold;font-size:14px;")
-            l.setContentsMargins(0, 10, 0, 2)
-            lay.addWidget(l)
+        def page():
+            host = QWidget()
+            host.setStyleSheet("background:transparent;")
+            hl = QVBoxLayout(host)
+            hl.setContentsMargins(0, 0, 0, 0)
+            sc = QScrollArea()
+            sc.setWidgetResizable(True)
+            sc.setFrameShape(QFrame.NoFrame)
+            sc.setStyleSheet("background:transparent;")
+            sc.viewport().setStyleSheet("background:transparent;")
+            inner = QWidget()
+            inner.setStyleSheet("background:transparent;")
+            l = QVBoxLayout(inner)
+            l.setContentsMargins(18, 16, 18, 16)
+            l.setSpacing(7)
+            sc.setWidget(inner)
+            hl.addWidget(sc)
+            return host, l
 
-        def desc(t):
-            l = QLabel(t)
-            l.setWordWrap(True)
-            l.setStyleSheet(f"color:{COMMENT};font-size:11px;")
-            l.setContentsMargins(22, 0, 0, 5)
-            lay.addWidget(l)
+        def desc(l, t):
+            x = QLabel(t)
+            x.setWordWrap(True)
+            x.setStyleSheet(f"color:{COMMENT};font-size:11px;")
+            x.setContentsMargins(2, 0, 0, 6)
+            l.addWidget(x)
 
-        def check(key, label):
+        def check(l, key, label):
             cb = QCheckBox(label)
             cb.setChecked(settings.get_bool(key))
             self._checks[key] = cb
-            lay.addWidget(cb)
+            l.addWidget(cb)
             return cb
 
-        def combo(label, key, items, default):
+        def combo(l, label, key, items, default):
             r = QHBoxLayout()
             r.addWidget(QLabel(label))
             c = QComboBox()
@@ -972,64 +1244,77 @@ class SettingsDialog(QDialog):
             c.setCurrentText(settings.get(key, default))
             r.addWidget(c)
             r.addStretch(1)
-            lay.addLayout(r)
+            l.addLayout(r)
             return c
 
-        # 화면 / 표시
-        title("화면 / 표시")
-        check("dark_titlebar", "Windows 다크 타이틀바")
-        desc("창 상단 제목 표시줄을 어두운 색으로 표시합니다 (Windows 10/11).")
-        check("show_stdin", "터미널에 입력(stdin) 칸 표시")
-        desc("Run 실행 시 직접 입력값을 넣는 칸. 끄면 숨겨집니다.")
-        self.combo_font = combo("에디터 글자 크기 (pt)", "editor_font_size",
-                                ["10", "11", "12", "13", "14", "16", "18"], "11")
-        desc("코드 에디터와 터미널의 글자 크기.")
+        # 탭: 화면 / 표시
+        p1, l1 = page()
+        check(l1, "dark_titlebar", "Windows 다크 타이틀바")
+        desc(l1, "창 상단 제목 표시줄을 어두운 색으로 표시합니다 (Windows 10/11).")
+        check(l1, "show_stdin", "터미널에 입력(stdin) 칸 표시")
+        desc(l1, "Run 실행 시 직접 입력값을 넣는 칸. 끄면 숨겨집니다.")
+        self.combo_font = combo(l1, "에디터 글자 크기 (pt)", "editor_font_size",
+                                ["8", "9", "10", "11", "12", "13", "14", "16", "18"], "11")
+        desc(l1, "코드 에디터와 터미널의 글자 크기.")
+        l1.addStretch(1)
+        tabs.addTab(p1, "화면 / 표시")
 
-        # 풀이 / 학습
-        title("풀이 / 학습")
-        check("reset_on_start", "시작할 때 작성한 코드·터미널 초기화")
-        desc("프로그램을 켤 때마다 에디터를 기본 템플릿으로 되돌리고 터미널을 비웁니다. "
-             "(푼 문제 기록·랭크·영단어 진행은 유지됩니다.)")
-        check("autofill_stdin", "Run 시 입력칸이 비어 있으면 예제 입력 자동 사용")
-        desc("입력값을 직접 넣지 않아도 그 문제의 첫 예제 입력으로 바로 실행해 봅니다.")
-        check("keep_solutions", "작성한 풀이 파일 보관")
-        desc("끄면 종료 시 풀이 코드 파일을 정리해 디스크 용량을 아낍니다.")
+        # 탭: 풀이 / 학습
+        p2, l2 = page()
+        check(l2, "reset_on_start", "시작할 때 작성한 코드·터미널 초기화")
+        desc(l2, "프로그램을 켤 때마다 에디터를 기본 템플릿으로 되돌리고 터미널을 비웁니다. "
+                 "(푼 문제 기록·랭크·영단어 진행은 유지됩니다.)")
+        check(l2, "autofill_stdin", "Run 시 입력칸이 비어 있으면 예제 입력 자동 사용")
+        desc(l2, "입력값을 직접 넣지 않아도 그 문제의 첫 예제 입력으로 바로 실행해 봅니다.")
+        check(l2, "keep_solutions", "작성한 풀이 파일 보관")
+        desc(l2, "끄면 종료 시 풀이 코드 파일을 정리해 디스크 용량을 아낍니다.")
+        check(l2, "rank_unlock", "랭크 잠금 해제 (모든 랭크 문제 풀기)")
+        desc(l2, "기본은 현재 랭크까지만 풀 수 있고 상위 랭크 문제는 잠겨 있습니다. "
+                 "이 옵션을 켜면 브론즈여도 플래티넘 문제까지 바로 풀 수 있습니다.")
+        l2.addStretch(1)
+        tabs.addTab(p2, "풀이 / 학습")
 
-        # 영단어
-        title("영단어")
-        self.combo = combo("퀴즈 문항 수", "quiz_size", ["10", "15", "20", "30"], "10")
-        desc("Run 또는 우클릭으로 푸는 단어 퀴즈의 문제 수.")
+        # 탭: 영단어
+        p3, l3 = page()
+        self.combo = combo(l3, "퀴즈 문항 수", "quiz_size", ["10", "15", "20", "30"], "10")
+        desc(l3, "Run 또는 우클릭으로 푸는 단어 퀴즈의 문제 수.")
+        l3.addStretch(1)
+        tabs.addTab(p3, "영단어")
 
-        # 종료
-        title("종료")
+        # 탭: 종료
+        p4, l4 = page()
         cr = QHBoxLayout()
         cr.addWidget(QLabel("닫기(X) 버튼 동작"))
         self.combo_close = QComboBox()
-        for label, data in [("물어보기", "ask"), ("프로그램 종료", "quit"), ("트레이로 보내기", "tray")]:
+        for label, data in [("프로그램 종료", "quit"), ("트레이로 보내기", "tray"), ("물어보기", "ask")]:
             self.combo_close.addItem(label, data)
-        ci = self.combo_close.findData(settings.get("close_action", "ask") or "ask")
+        ci = self.combo_close.findData(settings.get("close_action", "quit") or "quit")
         self.combo_close.setCurrentIndex(ci if ci >= 0 else 0)
         cr.addWidget(self.combo_close)
         cr.addStretch(1)
-        lay.addLayout(cr)
-        desc("창의 X를 눌렀을 때 종료할지, 트레이로 보낼지, 매번 물어볼지 선택합니다.")
+        l4.addLayout(cr)
+        desc(l4, "창의 X를 눌렀을 때 종료할지, 트레이로 보낼지, 매번 물어볼지 선택합니다. "
+                 "종료 시에는 한 번 더 확인합니다(‘트레이로 보내기’면 트레이 종료는 바로 실행).")
+        l4.addStretch(1)
+        tabs.addTab(p4, "종료")
 
-        # 관리
-        title("관리")
+        # 탭: 관리
+        p5, l5 = page()
         for label, fn in [("문제 변형 리셋 (변수 문제 새 값으로)", parent._on_reset),
                           ("내 티어 초기화 (푼 기록 삭제)", parent._reset_tier),
                           ("환경 점검 (JDK / g++ / Node)", parent._env_check)]:
             b = QPushButton(label)
             b.setObjectName("ManageBtn")
             b.clicked.connect(lambda _=False, fn=fn: (self.accept(), fn()))
-            lay.addWidget(b)
-        lay.addStretch(1)
+            l5.addWidget(b)
+        l5.addStretch(1)
+        tabs.addTab(p5, "관리")
 
         save = QPushButton("저장")
         save.setObjectName("Run")
         save.clicked.connect(self._save)
         bar = QHBoxLayout()
-        bar.setContentsMargins(16, 8, 16, 12)
+        bar.setContentsMargins(4, 0, 4, 4)
         bar.addStretch(1)
         bar.addWidget(save)
         outer.addLayout(bar)
@@ -1133,12 +1418,13 @@ class MainWindow(QMainWindow):
             self._ic_right = qta.icon("fa5s.chevron-right", color=COMMENT)
             self._ic_down = qta.icon("fa5s.chevron-down", color=COMMENT)
             self._ic_file = qta.icon("fa5s.file-code", color=COMMENT)
-            self._ic_done = qta.icon("fa5s.check", color=GREEN)
+            self._ic_done = qta.icon("fa5s.file-code", color=GREEN)   # 해결: 파일 아이콘 초록색
         else:
             self._ic_right = self._ic_down = self._ic_file = self._ic_done = None
 
         # 점수/랭크 계산용 전체 문제 목록(랭크 + 실전)
         self._all_problems = list(problems.BY_ID.values()) + list(practice.BY_ID.values())
+        self._unlocked_index = 0      # 해금된 최고 랭크(0=Bronze) — 상위는 잠김
 
         # 문제 변형(리셋) 상태
         self.variant_seed = None      # None=원본, 정수=변형 시드
@@ -1220,23 +1506,43 @@ class MainWindow(QMainWindow):
         self._native_applied = False
 
     def closeEvent(self, event):
-        # X 버튼: 설정값(close_action)에 따라 종료/트레이, 미설정이면 물어봄
-        action = self.settings.get("close_action", "ask") or "ask"
+        # X 버튼: 기본은 종료(컨펌), 설정에 따라 트레이/물어보기
+        action = self.settings.get("close_action", "quit") or "quit"
         if action == "ask":
             action = self._ask_close_action()
             if action is None:                  # 취소
                 event.ignore()
                 return
+            # ask 에서 고른 대로 바로 처리(추가 컨펌 없음)
+            if action == "tray" and getattr(self, "tray", None) is not None:
+                event.ignore()
+                self.hide()
+                self.tray.show()
+                return
+            self._do_quit(event)
+            return
         if action == "tray" and getattr(self, "tray", None) is not None:
             event.ignore()
             self.hide()
             self.tray.show()
             return
-        # 종료
+        # action == "quit" → 컨펌 후 종료
+        if not self._confirm_quit():
+            event.ignore()
+            return
+        self._do_quit(event)
+
+    def _confirm_quit(self):
+        return QMessageBox.question(self, "종료", "프로그램을 종료할까요?",
+                                    QMessageBox.Yes | QMessageBox.No,
+                                    QMessageBox.No) == QMessageBox.Yes
+
+    def _do_quit(self, event=None):
         self._cleanup_solutions()
         if getattr(self, "tray", None) is not None:
             self.tray.hide()
-        event.accept()
+        if event is not None:
+            event.accept()
         QApplication.instance().quit()
 
     def _cleanup_solutions(self):
@@ -1279,24 +1585,30 @@ class MainWindow(QMainWindow):
         self._tray_menu = QMenu()
         self._tray_menu.addAction("열기", self._show_normal)
         self._tray_menu.addAction("하이드 모드", self._tray_hide_mode)
-        # 영단어 깜빡임 암기 — 레벨 선택 → 메인창 없이 단독 다이얼로그로 진행
-        voc = self._tray_menu.addMenu("영단어 암기")
+        # 영단어 학습 — 레벨(기초/중급/고급) 선택 → 메인창 없이 단독 다이얼로그로 진행
+        m_type = self._tray_menu.addMenu("깜빡임 암기")
         for lv in vocab.LEVELS:
-            voc.addAction(lv, lambda _=False, l=lv: self._tray_vocab_drill(l))
+            m_type.addAction(lv, lambda _=False, l=lv: self._tray_vocab_drill(l, "typing"))
+        m_sent = self._tray_menu.addMenu("문장 완성")
+        for lv in vocab.LEVELS:
+            m_sent.addAction(lv, lambda _=False, l=lv: self._tray_vocab_drill(l, "sentence"))
         self._tray_menu.addSeparator()
         self._tray_menu.addAction("종료", self._quit_app)
         self.tray.setContextMenu(self._tray_menu)
         self.tray.activated.connect(self._tray_activated)
         self.tray.show()
 
-    def _tray_vocab_drill(self, level):
-        """트레이에서 영단어 암기 — 해당 레벨에서 랜덤 추출, 메인창 없이 모달 다이얼로그로."""
+    def _tray_vocab_drill(self, level, mode):
+        """트레이에서 영단어 학습 — 레벨 전체에서 랜덤 추출, 메인창 없이 모달 다이얼로그로."""
         words = vocab.BY_LEVEL.get(level, [])
-        if len(words) < 1:
+        if not words:
             return
-        n = self.settings.get_int("quiz_size", 10)
-        sample = random.sample(words, min(max(n, 10), len(words)))
-        TypingDrillDialog(self, sample, self.vocab_db).exec()
+        if mode == "sentence":
+            DrillDialog(self, SentenceDrillWidget(), words, self.vocab_db,
+                        f"문장 완성 · {level}").exec()
+        else:
+            DrillDialog(self, TypingDrillWidget(), words, self.vocab_db,
+                        f"깜빡임 암기 · {level}").exec()
 
     def _tray_activated(self, reason):
         if reason in (QSystemTrayIcon.DoubleClick, QSystemTrayIcon.Trigger):
@@ -1312,10 +1624,13 @@ class MainWindow(QMainWindow):
         self._set_hide_mode(True)
 
     def _quit_app(self):
-        self._cleanup_solutions()
-        if getattr(self, "tray", None) is not None:
-            self.tray.hide()
-        QApplication.instance().quit()
+        # 트레이 '종료': X가 '트레이로 보내기'로 설정돼 있으면 바로 종료,
+        # 그 외(종료/물어보기)면 메인창 띄우고 컨펌 후 종료.
+        if self.settings.get("close_action", "quit") != "tray":
+            self._show_normal()
+            if not self._confirm_quit():
+                return
+        self._do_quit()
 
     # ---- 하이드(집중) 모드 ----
     def _populate_hide_combo(self):
@@ -1343,17 +1658,23 @@ class MainWindow(QMainWindow):
     def _toggle_hide_mode(self):
         self._set_hide_mode(not self._hidden_mode)
 
-    def _set_hide_mode(self, on):
-        """on: 사이드바·문제설명 숨기고 에디터+터미널만 + 창을 작게. 문제 선택은 상단 콤보로."""
-        if on and not self._hidden_mode:
-            self._saved_geometry = self.geometry()      # 들어가기 전 창 크기/위치 기억
-        self._hidden_mode = on
+    def _apply_hide_visibility(self):
+        """하이드 모드 가시성 — 문제 모드: 코딩+터미널만 / 영단어 모드: 단어 카드만."""
+        on = self._hidden_mode
+        is_vocab = self._mode == "vocab"
         self.side.setVisible(not on)
-        self.probp.setVisible(not on)
-        self.hide_combo.setVisible(on)
+        self.probp.setVisible((not on) or is_vocab)   # 영단어면 카드 유지(작은 창에 단어 표시)
+        self.hide_combo.setVisible(on and not is_vocab)
         self.rank_label.setVisible(not on)
         self.rank_bar.setVisible(not on)
         self.side_toggle.setVisible(not on)
+
+    def _set_hide_mode(self, on):
+        """on: 사이드바 숨기고 컴팩트 창. 문제 모드는 에디터+터미널, 영단어 모드는 단어 카드만."""
+        if on and not self._hidden_mode:
+            self._saved_geometry = self.geometry()      # 들어가기 전 창 크기/위치 기억
+        self._hidden_mode = on
+        self._apply_hide_visibility()
         if qta:
             self.hide_btn.setIcon(qta.icon("fa5s.expand" if on else "fa5s.compress", color=FG))
         else:
@@ -1624,6 +1945,11 @@ class MainWindow(QMainWindow):
             f = w.font()
             f.setPointSize(size)
             w.setFont(f)
+        # 랭크 잠금 해제 변경 반영(잠금 표시 새로고침)
+        if hasattr(self, "_all_problems"):
+            self._update_profile()
+            if self.current and self._mode == "problem":
+                self._render_problem(self._cur_active or self.current)
 
     def _reset_tier(self):
         if not self._confirm("내 티어/진행상황을 모두 초기화할까요?\n(푼 문제 기록이 삭제됩니다 · 작성한 코드는 유지)"):
@@ -1719,13 +2045,21 @@ class MainWindow(QMainWindow):
         self._profile_info = info
         self.rank_label.setText(f"{info['emoji']} {info['code']}")
         self.rank_bar.setValue(info["progress"])
-        tip = (f"내 랭크: {info['tier_kr']}   ·   점수 {info['score']}   ·   {info['n_solved']}문제 해결\n"
+        tip = (f"내 랭크: {info['tier_kr']}   ·   경험치 {info['score']}/{info['max_score']}   ·   {info['n_solved']}문제 해결\n"
                + "   ".join(f"{profile.RANK_EMOJI[r]} {info['solved'].get(r,0)}/{info['total'].get(r,0)}"
                             for r in profile.RANK_ORDER))
         if info.get("next_goal"):
             tip += f"\n다음 목표: {info['next_goal']}"
+        unlocked_rank = profile.RANK_KR[profile.RANK_ORDER[info["rank_index"]]]
+        tip += f"\n해금: {unlocked_rank}까지 풀 수 있음 (상위는 잠김 · 설정에서 해제 가능)"
         self.rank_label.setToolTip(tip)
         self.rank_bar.setToolTip(tip)
+        # 해금 랭크 갱신 → 바뀌면 트리 잠금 표시 새로고침
+        new_unlocked = 3 if self.settings.get_bool("rank_unlock") else info["rank_index"]
+        if new_unlocked != getattr(self, "_unlocked_index", None):
+            self._unlocked_index = new_unlocked
+            if getattr(self, "tree", None) is not None:
+                self._refresh_all_items()
 
     # ---- 본문 ----
     def _build_body(self):
@@ -1880,6 +2214,9 @@ class MainWindow(QMainWindow):
         self.typing_widget = TypingDrillWidget()
         self.typing_widget.finished.connect(self._end_inline_typing)
         self.right_stack.addWidget(self.typing_widget)
+        self.sentence_widget = SentenceDrillWidget()
+        self.sentence_widget.finished.connect(self._end_inline_typing)
+        self.right_stack.addWidget(self.sentence_widget)
         split.addWidget(self.right_stack)
 
         # 텍스트 영역(문제/console/terminal/입력)의 viewport 배경을 카드색과 정확히 일치
@@ -2005,6 +2342,13 @@ class MainWindow(QMainWindow):
                 if not words:
                     continue
                 lvnode = self._group_item(vg, f"{lv} ({len(words)})")
+                # 레벨 전체에서 테스트
+                allit = QTreeWidgetItem(lvnode, [f"⭐ 전체 테스트 ({len(words)})"])
+                if self._ic_file is not None:
+                    allit.setIcon(0, self._ic_file)
+                self.item_vocab[id(allit)] = {
+                    "title": f"{lv} 전체", "words": words, "level": lv,
+                }
                 for cat in vocab.CATEGORIES:
                     cwords = [w for w in words if w.category == cat]
                     if not cwords:
@@ -2032,13 +2376,41 @@ class MainWindow(QMainWindow):
         return int(t[-1]) if t[-1:].isdigit() else None
 
     def _apply_item_style(self, it, p, solved):
-        """티어/해결 정보를 데이터로 저장 → TierDelegate 가 'T{n}'만 색칠, 타이틀 기본색, 우측 체크."""
+        """티어/해결/잠금 정보를 데이터로 저장 → TierDelegate 가 렌더.
+        해결=앞 파일 아이콘 초록색, 잠김(상위 랭크)=흐리게 + 🔒."""
         it.setText(0, p.title)
         if self._ic_file is not None:
-            it.setIcon(0, self._ic_file)
+            it.setIcon(0, self._ic_done if solved else self._ic_file)
         it.setData(0, ROLE_TIER, self._tier_num(p))
         it.setData(0, ROLE_SOLVED, solved)
+        it.setData(0, ROLE_LOCKED, self._is_locked(p))
         it.setForeground(0, QColor(FG))
+
+    def _is_locked(self, p):
+        """현재 해금된 랭크보다 높은 랭크의 문제는 잠김(설정 '랭크 잠금 해제' 시 항상 풀림)."""
+        if self.settings.get_bool("rank_unlock"):
+            return False
+        try:
+            return profile.RANK_ORDER.index(p.rank) > self._unlocked_index
+        except (ValueError, AttributeError):
+            return False
+
+    def _refresh_all_items(self):
+        for p in self._all_problems:
+            self._refresh_item(p)
+
+    def _blocked_locked(self, p):
+        """잠긴(상위 랭크) 문제면 안내 후 True. 풀 수 있으면 False."""
+        if not self._is_locked(p):
+            return False
+        need = profile.RANK_KR.get(p.rank, p.rank)
+        cur = profile.RANK_KR[profile.RANK_ORDER[self._unlocked_index]]
+        self.out.clear()
+        self._append(f"🔒 아직 잠긴 문제예요 — {need} 랭크에 도달해야 풀 수 있어요. (현재 해금: {cur})\n", ORANGE)
+        self._append("  더 낮은 랭크 문제를 풀어 경험치를 올리면 해금됩니다.\n"
+                     "  (설정 → 풀이/학습 → '랭크 잠금 해제'를 켜면 바로 풀 수 있어요)\n", COMMENT)
+        self._set_status("🔒 잠김 — 랭크업 필요", ORANGE)
+        return True
 
     def _add_problem(self, parent, p):
         solved = p.id in self.solved
@@ -2112,6 +2484,8 @@ class MainWindow(QMainWindow):
         self._cur_active = self._apply_variant(p)
         self._reveal = 0          # 새 문제 → 힌트 숨김 상태로
         self._show_code_panel(True)
+        if self._hidden_mode:
+            self._apply_hide_visibility()       # 문제 모드: 설명 숨기고 코딩+터미널
         self._render_problem(self._cur_active)
         self._load_editor()
         self._prefill_stdin(self._cur_active)
@@ -2295,6 +2669,8 @@ class MainWindow(QMainWindow):
         self.current = None
         self.current_lesson = None
         self._show_code_panel(False)            # 에디터·터미널 숨김
+        if self._hidden_mode:
+            self._apply_hide_visibility()       # 하이드 중이면 단어 카드는 보이게
         self._render_vocab(entry)
         self.out.clear()
         self._set_status("단어 학습 · Run → 타이핑 암기 · 우클릭 → 퀴즈", CYAN)
@@ -2309,8 +2685,9 @@ class MainWindow(QMainWindow):
                  f"<span style='color:{COMMENT};font-size:12px;'>({len(words)}개)</span></div>")
         h.append(f"<div style='color:{COMMENT};font-size:11px;'>누적 — 정답 {st['correct']} · 오답 {st['wrong']} · 외운 단어 {st['known']}</div>")
         h.append(f"<div style='color:{GREEN};font-size:11px;margin-bottom:8px;'>"
-                 f"▶ Run → 타이핑 암기 (단어 깜빡 후 입력) · 우클릭 → 타이핑/객관식 선택</div>")
-        for w in words:
+                 f"▶ Run → 깜빡임 암기 · 우클릭 → 깜빡임 암기 / 문장 완성 / 객관식 선택</div>")
+        DISPLAY_CAP = 120
+        for w in words[:DISPLAY_CAP]:
             mark = " ✅" if w.word in known else ""
             pkr = pos_kr(w.pos)
             pos_html = (f" <span style='color:{COMMENT};font-size:11px;'>[{html.escape(pkr)}]</span>"
@@ -2323,6 +2700,9 @@ class MainWindow(QMainWindow):
                 if w.example_kr:
                     h.append(f"<br><span style='color:{COMMENT};font-size:12px;'>{html.escape(w.example_kr)}</span>")
             h.append("</div>")
+        if len(words) > DISPLAY_CAP:
+            h.append(f"<div style='color:{COMMENT};margin-top:10px;'>… 외 {len(words) - DISPLAY_CAP}개 "
+                     f"— Run/우클릭으로 이 묶음 전체에서 무작위로 테스트됩니다.</div>")
         h.append("</div>")
         self._show_html(h)
 
@@ -2346,7 +2726,19 @@ class MainWindow(QMainWindow):
         self.right_stack.setCurrentWidget(self.typing_widget)
         self.right_stack.setVisible(True)
         self.typing_widget.start(words, self.vocab_db)
-        self._set_status("타이핑 암기 중 — 단어 깜빡 후 입력 · '그만하기'로 결과", CYAN)
+        self._set_status("깜빡임 암기 중 — 단어 깜빡 후 입력 · '그만하기'로 결과", CYAN)
+
+    def _vocab_sentence(self):
+        """문장 완성 — 가운데 단어 카드 블러 + 우측에 문장 완성 카드."""
+        words = getattr(self, "vocab_words", None) or vocab.BY_LEVEL.get(self.vocab_level, [])
+        if not words:
+            self._set_status("단어가 없습니다", ORANGE)
+            return
+        self._blur_content(True)
+        self.right_stack.setCurrentWidget(self.sentence_widget)
+        self.right_stack.setVisible(True)
+        self.sentence_widget.start(words, self.vocab_db)
+        self._set_status("문장 완성 중 — 빈칸에 단어 입력 후 Enter", CYAN)
 
     # ───────────────────────── 실전 모의고사 ─────────────────────────
 
@@ -2561,6 +2953,10 @@ class MainWindow(QMainWindow):
         v.add(make_label(p.title, PURPLE, 18, bold=True))
         v.add(make_label(" · ".join(str(m) for m in meta), COMMENT, 11))
         v.add(make_label(f"{io}  ·  {langs}", COMMENT, 11))
+        if self._is_locked(p):
+            cur = profile.RANK_KR[profile.RANK_ORDER[self._unlocked_index]]
+            v.add(make_label(f"🔒 잠긴 문제 — {profile.RANK_KR.get(p.rank, p.rank)} 랭크 도달 시 풀 수 있어요 "
+                             f"(현재 해금: {cur} · 설정에서 잠금 해제 가능)", ORANGE, 12, bold=True), top=6)
 
         # 제한 — ⏱ 시간 / 💾 메모리
         lim = QWidget()
@@ -2651,11 +3047,14 @@ class MainWindow(QMainWindow):
         widget = widget or self.prob
         if self._mode == "vocab":
             m = QMenu(widget)
-            a_type = m.addAction("타이핑 암기 (단어 깜빡 → 입력)")
+            a_type = m.addAction("깜빡임 암기 (단어 깜빡 → 입력)")
+            a_sent = m.addAction("문장 완성 (빈칸 채우기)")
             a_quiz = m.addAction("객관식 퀴즈")
             act = m.exec(widget.mapToGlobal(pos))
             if act == a_type:
                 self._vocab_typing()
+            elif act == a_sent:
+                self._vocab_sentence()
             elif act == a_quiz:
                 self._vocab_quiz()
             return
@@ -2715,6 +3114,8 @@ class MainWindow(QMainWindow):
             return
         if not self.current:
             return
+        if self._blocked_locked(self.current):
+            return
         p, lang = (self._cur_active or self.current), self.lang
         if not runner.compiler_available(lang):
             self.out.clear()
@@ -2755,6 +3156,8 @@ class MainWindow(QMainWindow):
         """제출 — 문제의 테스트케이스로 채점해 정답/오답 판정."""
         if self._mode != "problem" or not self.current:
             self._set_status("채점할 문제를 선택하세요", ORANGE)
+            return
+        if self._blocked_locked(self.current):
             return
         p, lang = (self._cur_active or self.current), self.lang
         if p.type == "func" and lang != "python":

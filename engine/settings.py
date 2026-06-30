@@ -11,6 +11,8 @@ DEFAULTS = {
     "reset_on_start": "1",     # 시작 시 작성 코드·터미널 초기화
     "autofill_stdin": "1",     # Run 시 입력칸 비면 예제 입력 자동 사용
     "editor_font_size": "11",  # 에디터/터미널 글자 크기(pt)
+    "close_action": "quit",    # X 버튼 기본 동작: quit(종료·컨펌) / tray / ask
+    "rank_unlock": "0",        # 랭크 잠금 해제 — 켜면 모든 랭크 문제 풀 수 있음
 }
 
 
