@@ -25,9 +25,10 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QSplitter, QTreeWidget, QTreeWidgetItem, QTextBrowser,
                                QTextEdit, QPlainTextEdit, QSizePolicy, QMenu, QMessageBox,
                                QDialog, QProgressBar, QCheckBox, QComboBox,
-                               QStackedWidget, QScrollArea, QSystemTrayIcon)
+                               QStackedWidget, QScrollArea, QSystemTrayIcon, QSlider,
+                               QStyle, QStyleOptionSlider)
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -59,7 +60,7 @@ import lessons
 import vocab
 from vocab.progress import VocabDB
 from engine.settings import SettingsDB
-from engine.judge import judge as judge_problem, VERDICT_KR
+from engine.judge import judge as judge_problem, VERDICT_KR, effective_limits
 from engine import runner, profile, topics, variants, exam
 from engine.runner import compile_solution, run_process
 
@@ -173,6 +174,14 @@ QTextBrowser, QTextEdit, QPlainTextEdit {{
 #Output {{ background:{CARD}; }}
 #ProblemView, #ProblemBody {{ background:{CARD}; border:none; }}
 #CodeBox {{ background:{CARD}; border:1px solid {BORDER}; border-radius:6px; }}
+#OpacityBar {{ background:{BG2}; border:1px solid {BORDER}; border-radius:8px; }}
+#OpacityBar QLabel {{ background:transparent; }}
+QSlider#OpacitySlider {{ background:transparent; }}
+QSlider#OpacitySlider::groove:horizontal {{ height:4px; background:{CUR}; border-radius:2px; }}
+QSlider#OpacitySlider::add-page:horizontal {{ background:{CUR}; border-radius:2px; }}
+QSlider#OpacitySlider::sub-page:horizontal {{ background:{PURPLE}; border-radius:2px; }}
+QSlider#OpacitySlider::handle:horizontal {{ width:12px; height:12px; margin:-5px 0; background:{PURPLE}; border-radius:6px; }}
+QSlider#OpacitySlider::handle:horizontal:hover {{ background:{PURPLE_D}; }}
 
 QScrollBar:vertical {{ background:transparent; width:7px; margin:3px 2px 3px 0; }}
 QScrollBar::handle:vertical {{ background:{CUR}; border-radius:3px; min-height:30px; }}
@@ -398,6 +407,28 @@ def make_codebox(text):
     lab.setTextInteractionFlags(Qt.TextSelectableByMouse)
     lay.addWidget(lab)
     return box
+
+
+class ClickSlider(QSlider):
+    """그루브 아무 곳이나 클릭하면 그 위치 값으로 즉시 이동.
+    (기본 QSlider 는 그루브 클릭 시 페이지 스텝만큼만 이동해 클릭 위치와 어긋남)"""
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and self.maximum() > self.minimum():
+            opt = QStyleOptionSlider()
+            self.initStyleOption(opt)
+            groove = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self)
+            handle = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self)
+            if self.orientation() == Qt.Horizontal:
+                span = groove.width() - handle.width()
+                pos = int(e.position().x()) - groove.x() - handle.width() // 2
+                val = QStyle.sliderValueFromPosition(self.minimum(), self.maximum(), pos, span)
+            else:
+                span = groove.height() - handle.height()
+                pos = int(e.position().y()) - groove.y() - handle.height() // 2
+                val = QStyle.sliderValueFromPosition(self.minimum(), self.maximum(), pos, span, True)
+            self.setValue(val)
+        super().mousePressEvent(e)
 
 
 class ProblemView(QScrollArea):
@@ -673,12 +704,14 @@ class MainWindow(QMainWindow):
         self.exam_timer.timeout.connect(self._tick_exam)
 
         central = QWidget()
+        self._central = central
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         outer.addWidget(self._build_titlebar())
         outer.addWidget(self._build_body(), 1)
+        self._build_opacity_overlay(central)
 
         # 앱 전역 단축키 (에디터에 포커스가 있어도 동작)
         self._shortcuts = []
@@ -706,12 +739,18 @@ class MainWindow(QMainWindow):
         self._shortcuts.append(hide_sc)
 
         self._hidden_mode = False
+        self._saved_geometry = None
         self._tray_hinted = False
         self._build_tree()
         self._populate_hide_combo()
         self._build_tray()
         self._update_profile()
         self._apply_settings()
+        # 저장된 투명도 적용
+        op = self.settings.get_int("opacity", 100)
+        op = min(100, max(10, op))
+        self.opacity_slider.setValue(op)
+        self._set_opacity(op)
         self._native_applied = False
 
     def closeEvent(self, event):
@@ -830,7 +869,9 @@ class MainWindow(QMainWindow):
         self._set_hide_mode(not self._hidden_mode)
 
     def _set_hide_mode(self, on):
-        """on: 사이드바·문제설명 숨기고 에디터+터미널만. 문제 선택은 상단 콤보로."""
+        """on: 사이드바·문제설명 숨기고 에디터+터미널만 + 창을 작게. 문제 선택은 상단 콤보로."""
+        if on and not self._hidden_mode:
+            self._saved_geometry = self.geometry()      # 들어가기 전 창 크기/위치 기억
         self._hidden_mode = on
         self.side.setVisible(not on)
         self.probp.setVisible(not on)
@@ -842,13 +883,92 @@ class MainWindow(QMainWindow):
             self.hide_btn.setIcon(qta.icon("fa5s.expand" if on else "fa5s.compress", color=FG))
         else:
             self.hide_btn.setText("해제" if on else "집중")
+        self._set_compact_header(on)
         if on:
+            self.setMinimumSize(420, 360)                # 작게 줄일 수 있도록 최소치 완화
+            self.resize(540, 600)                        # width 는 약 1/4 축소(720→540)
             self._sync_hide_combo()
             self._set_status("하이드 모드 — 코딩 + 터미널만 (Ctrl+H 또는 우측 버튼으로 해제)", CYAN)
+        else:
+            self.setMinimumSize(1160, 720)               # 원래 최소 크기 복원
+            if self._saved_geometry is not None:
+                self.setGeometry(self._saved_geometry)   # 원래 창 크기/위치 복원
+        self._position_overlay()
+
+    def _set_compact_header(self, on):
+        """좁은 하이드 모드용 반응형 헤더 — Run은 'R', 제출은 아이콘만, 콤보·버튼 축소."""
+        if on:
+            self.hide_combo.setMinimumWidth(140)
+            self.run_btn.setText("R")
+            self.run_btn.setFixedWidth(32)
+            self.run_btn.setToolTip("실행 (F5)")
+            self.submit_btn.setFixedWidth(34)
+            if qta:
+                self.submit_btn.setText("")
+                self.submit_btn.setIcon(qta.icon("fa5s.paper-plane", color=BG3))
+            else:
+                self.submit_btn.setText("↑")
+            self.submit_btn.setToolTip("제출 — 채점 (Ctrl+Enter)")
+        else:
+            self.hide_combo.setMinimumWidth(240)
+            self.run_btn.setText("▶ Run")
+            self.run_btn.setFixedWidth(80)
+            self.submit_btn.setFixedWidth(74)
+            self.submit_btn.setIcon(QIcon())
+            self.submit_btn.setText("제출")
+
+    # ---- 전체 투명도 오버레이 (우측 하단, 상시) ----
+    def _build_opacity_overlay(self, parent):
+        bar = QFrame(parent)
+        bar.setObjectName("OpacityBar")
+        bar.setFixedSize(206, 30)
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(10, 0, 10, 0)
+        lay.setSpacing(7)
+        cap = QLabel("투명도")
+        cap.setStyleSheet(f"color:{COMMENT}; font-size:10px; font-weight:bold; background:transparent;")
+        lay.addWidget(cap)
+        self.opacity_slider = ClickSlider(Qt.Horizontal)
+        self.opacity_slider.setObjectName("OpacitySlider")
+        self.opacity_slider.setRange(10, 100)
+        self.opacity_slider.setValue(100)
+        self.opacity_slider.setFixedWidth(104)
+        self.opacity_slider.setToolTip("프로그램 전체 투명도")
+        self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
+        lay.addWidget(self.opacity_slider)
+        self.opacity_label = QLabel("100%")
+        self.opacity_label.setStyleSheet(f"color:{FG}; font-size:10px; background:transparent;")
+        self.opacity_label.setFixedWidth(32)
+        lay.addWidget(self.opacity_label)
+        self.opacity_bar = bar
+        bar.raise_()
+
+    def _on_opacity_changed(self, v):
+        self._set_opacity(v)
+        self.settings.set("opacity", v)
+
+    def _set_opacity(self, v):
+        self.setWindowOpacity(max(0.10, min(1.0, v / 100.0)))
+        if hasattr(self, "opacity_label"):
+            self.opacity_label.setText(f"{v}%")
+
+    def _position_overlay(self):
+        bar = getattr(self, "opacity_bar", None)
+        if bar is None or self._central is None:
+            return
+        m = 14
+        bar.move(max(0, self._central.width() - bar.width() - m),
+                 max(0, self._central.height() - bar.height() - m))
+        bar.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_overlay()
 
     # ---- 네이티브 타이틀바(캡션) 다크/색상 ----
     def showEvent(self, event):
         super().showEvent(event)
+        self._position_overlay()
         if not self._native_applied:
             self._native_applied = True
             self._apply_native_titlebar()
@@ -898,18 +1018,6 @@ class MainWindow(QMainWindow):
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(10, 0, 10, 0)
         lay.setSpacing(6)
-
-        # 헤더 로고
-        logo = QLabel()
-        logo.setObjectName("HeaderLogo")
-        pm = app_icon().pixmap(24, 24)
-        if not pm.isNull():
-            logo.setPixmap(pm)
-        logo.setFixedSize(26, 26)
-        logo.setScaledContents(True)
-        logo.setToolTip(f"code T  v{APP_VERSION}")
-        lay.addWidget(logo)
-        lay.addSpacing(2)
 
         # 사이드바 접기/펴기
         self.side_toggle = QPushButton()
@@ -1643,7 +1751,8 @@ class MainWindow(QMainWindow):
     def _start_exam(self, preset):
         # 확인(모달) 후 시작 — 누르자마자 자동 시작 X
         msg = (f"[{preset['title']}]\n\n{preset['desc']}\n\n"
-               f"제한시간 {preset['minutes']}분 · 합격 {preset['pass_solve']}문제 이상.\n"
+               f"제한시간 {preset['minutes']}분 · 합격: 총 배점의 {int(preset.get('pass_ratio', 0.55) * 100)}% 이상.\n"
+               "(난이도가 높은 문제일수록 배점이 큽니다 · 플래티넘 1~2문제 포함)\n"
                "시험을 시작하시겠습니까? (시작하면 문제가 출제됩니다)")
         if self.exam:
             msg = "진행 중인 시험을 끝내고 새로 시작할까요?"
@@ -1710,15 +1819,20 @@ class MainWindow(QMainWindow):
         h = [f"<div style='font-family:Segoe UI;color:{FG};font-size:13px;line-height:1.6;'>"]
         h.append(f"<div style='color:{PURPLE};font-size:18px;font-weight:bold;'>📝 {html.escape(preset['title'])}</div>")
         h.append(f"<div style='color:{COMMENT};font-size:12px;margin-top:3px;'>{html.escape(preset['desc'])}</div>")
+        need_score = exam.pass_score(preset, ex["problems"])
+        total_score = sum(profile.problem_points(p) for p in ex["problems"])
+        got_score = sum(profile.problem_points(p) for p in ex["problems"] if p.id in ex["solved"])
         h.append(f"<div style='color:{ORANGE};font-weight:bold;margin-top:5px;'>"
-                 f"제한시간 {preset['minutes']}분 · 합격 기준 {preset['pass_solve']}문제 이상 정답</div>")
-        h.append(sec("출제 문제"))
+                 f"제한시간 {preset['minutes']}분 · 합격 {need_score}점 이상 / 총 {total_score}점"
+                 f" · 현재 {got_score}점</div>")
+        h.append(sec("출제 문제 (난이도 높을수록 배점↑)"))
         for i, p in enumerate(ex["problems"], 1):
             done = p.id in ex["solved"]
             mark = "✅" if done else "⬜"
             tier = p.tier or p.rank[0]
+            pts = profile.problem_points(p)
             h.append(f"<div style='margin:3px 0;'>{mark} {i}. {html.escape(p.title)} "
-                     f"<span style='color:{COMMENT};'>[{tier}]</span></div>")
+                     f"<span style='color:{COMMENT};'>[{tier} · {pts}점]</span></div>")
         h.append(f"<div style='color:{COMMENT};margin-top:12px;'>← 사이드바 '▶ 시험' 그룹에서 문제를 골라 풀고, "
                  f"상단 <b>제출</b> 로 채점하세요. 시간이 끝나면 자동 채점됩니다.</div>")
         h.append("</div>")
@@ -1741,8 +1855,8 @@ class MainWindow(QMainWindow):
         for p in ex["problems"]:
             ok = p.id in ex["solved"]
             self._append(f"  {'✓' if ok else '✗'} {p.title}\n", GREEN if ok else RED)
-        self._append(f"\n  {title}   {res['n_solved']}/{res['n_total']} 정답 "
-                     f"(합격 기준 {res['need']}문제)  ·  점수 {res['got_score']}/{res['total_score']}\n",
+        self._append(f"\n  {title}   점수 {res['got_score']}/{res['total_score']} "
+                     f"(합격 {res['need_score']}점 이상)  ·  {res['n_solved']}/{res['n_total']}문제 정답\n",
                      color, bold=True)
         self._set_status(title, color)
 
@@ -2017,9 +2131,10 @@ class MainWindow(QMainWindow):
         self._save_editor()
         path = self._sol_path(p, lang)
         self.next_btn.setVisible(False)
+        eff_tl, eff_ml = effective_limits(p, lang)
         self.out.clear()
         self._append(f"$ submit {runner.LANGUAGES[lang]['name']}   "
-                     f"limit  ⏱ {p.time_limit_ms}ms · 💾 {p.memory_limit_mb}MB\n", CYAN)
+                     f"limit  ⏱ {eff_tl}ms · 💾 {eff_ml}MB\n", CYAN)
         self._set_status("채점 중…", YELLOW)
         self.submit_btn.setEnabled(False)
         th = JudgeThread(p, lang, path)
@@ -2037,6 +2152,7 @@ class MainWindow(QMainWindow):
         self._render_result(p, lang, res)
 
     def _render_result(self, p, lang, res):
+        eff_tl, eff_ml = effective_limits(p, lang)
         if res.unsupported:
             self._append(res.unsupported + "\n", ORANGE)
             self._set_status("채점 불가", ORANGE)
@@ -2066,9 +2182,9 @@ class MainWindow(QMainWindow):
                 elif c.verdict == "RE" and c.error:
                     self._append(f"     err: {c.error}\n", COMMENT)
                 elif c.verdict == "TLE":
-                    self._append(f"     > {p.time_limit_ms}ms\n", COMMENT)
+                    self._append(f"     > {eff_tl}ms\n", COMMENT)
                 elif c.verdict == "MLE":
-                    self._append(f"     > {p.memory_limit_mb}MB\n", COMMENT)
+                    self._append(f"     > {eff_ml}MB\n", COMMENT)
 
         self._append("─" * 54 + "\n", COMMENT)
         if res.accepted:

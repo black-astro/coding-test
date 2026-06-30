@@ -75,10 +75,23 @@ def _normalize(text: str) -> str:
     return "\n".join(lines)
 
 
-def _limits(problem):
+# 언어별 제한 배수 — 문제 고유 제한(문제별)에 곱해 실제 적용 제한(언어별)을 구한다.
+#  C++ 은 1.0(가장 빡빡), 인터프리터/VM 언어는 런타임 특성만큼만 더 준다.
+#  실제 온라인 저지가 언어별로 시간/메모리를 차등 적용하는 것과 같은 취지로, 빡빡하게 유지.
+LANG_TIME_MULT = {"python": 3.0, "java": 2.0, "cpp": 1.0, "javascript": 2.0}
+LANG_MEM_MULT  = {"python": 1.5, "java": 2.0, "cpp": 1.0, "javascript": 1.5}
+
+
+def effective_limits(problem, lang: str = "python"):
+    """문제별 기본 제한 × 언어별 배수 = 실제 적용 (시간 ms, 메모리 MB)."""
     tl = problem.time_limit_ms or 2000
     ml = problem.memory_limit_mb or 256
-    return tl, ml
+    return (int(round(tl * LANG_TIME_MULT.get(lang, 1.0))),
+            int(round(ml * LANG_MEM_MULT.get(lang, 1.0))))
+
+
+def _limits(problem, lang: str = "python"):
+    return effective_limits(problem, lang)
 
 
 def _verdict_for(run, expected_norm, actual_norm, tl_ms, ml_mb):
@@ -109,7 +122,7 @@ def judge(problem, source_path, lang: str = "python") -> JudgeResult:
 
 
 def _judge_stdin(problem, source_path: Path, lang: str) -> JudgeResult:
-    tl_ms, ml_mb = _limits(problem)
+    tl_ms, ml_mb = _limits(problem, lang)
 
     comp = compile_solution(lang, source_path)
     if not comp.ok:
@@ -139,7 +152,7 @@ def _judge_stdin(problem, source_path: Path, lang: str) -> JudgeResult:
 
 
 def _judge_func(problem, source_path: Path) -> JudgeResult:
-    tl_ms, ml_mb = _limits(problem)
+    tl_ms, ml_mb = _limits(problem, "python")
     kill_s = max(tl_ms * 3, tl_ms + 2000) / 1000.0
 
     cases = []

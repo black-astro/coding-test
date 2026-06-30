@@ -74,7 +74,8 @@ def compute(solved_ids: set, all_problems) -> dict:
         emoji = RANK_EMOJI[cur]
         progress = max(0, min(100, int(round((band - idx) * 100))))   # 현재 세부티어 내 진행률
     else:
-        code, tier_kr, emoji = "—", "랭크 없음", "▫"
+        # 아직 랭크 진입 전 — 기본값은 브론즈 5, 게이지 0%부터 시작
+        code, tier_kr, emoji = "B5", f"{RANK_KR['Bronze']} 5", RANK_EMOJI["Bronze"]
         progress = min(100, int(solved["Bronze"] / max(1, GATE["Bronze"]) * 100))
 
     # 다음 목표 안내 (점수/문제 수 둘 다 고려)
