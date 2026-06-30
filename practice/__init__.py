@@ -64,7 +64,21 @@ for _name in (_names or _CATEGORY_MODULES):
     for _p in getattr(_m, "PROBLEMS", []):
         ALL.setdefault(_cat, []).append(_p)
 
-# 카테고리·기본 제한 채우기
+# 카테고리·기본 제한·티어 채우기
+#  실전 문제는 rank 만 있고 세부 티어가 없었음 → rank 기준으로 티어(상위권 1~3) 부여.
+_RANK_LETTER = {"Bronze": "B", "Silver": "S", "Gold": "G", "Platinum": "P"}
+
+
+def _seq_num(pid: str) -> int:
+    d = ""
+    for ch in reversed(pid):
+        if ch.isdigit():
+            d = ch + d
+        else:
+            break
+    return int(d) if d else 0
+
+
 for _c, _plist in ALL.items():
     for _p in _plist:
         if not _p.category:
@@ -73,6 +87,9 @@ for _c, _plist in ALL.items():
             _p.time_limit_ms = 2000
         if _p.memory_limit_mb is None:
             _p.memory_limit_mb = 256
+        if not _p.tier:
+            _num = (2, 1, 3)[_seq_num(_p.id) % 3]   # 랭크 내 상위권으로 1~3 분산
+            _p.tier = _RANK_LETTER.get(_p.rank, "S") + str(_num)
     _plist.sort(key=lambda p: p.id)
 
 # C++ 정답 코드 적용 (practice/cpp/*.py 의 CPP 맵)

@@ -16,7 +16,8 @@ import shutil
 import dataclasses
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QRect, QSize, QRegularExpression, Signal, QThread, QTimer
+from PySide6.QtCore import (Qt, QRect, QSize, QRegularExpression, Signal, QThread, QTimer,
+                            QObject, QEvent)
 from PySide6.QtGui import (QColor, QFont, QPainter, QTextCharFormat, QTextCursor,
                            QSyntaxHighlighter, QTextFormat, QTextOption, QAction,
                            QKeySequence, QShortcut, QIcon, QPixmap, QCursor, QPalette)
@@ -26,9 +27,10 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QTextEdit, QPlainTextEdit, QSizePolicy, QMenu, QMessageBox,
                                QDialog, QProgressBar, QCheckBox, QComboBox,
                                QStackedWidget, QScrollArea, QSystemTrayIcon, QSlider,
-                               QStyle, QStyleOptionSlider, QLineEdit)
+                               QStyle, QStyleOptionSlider, QLineEdit,
+                               QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect)
 
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -42,6 +44,40 @@ def resource(*parts) -> Path:
 
 ICON_ICO = resource("img", "app.ico")     # 멀티사이즈(작업표시줄/프로그램 아이콘)
 ICON_PNG = resource("img", "logo_clean.png")
+
+
+def apply_caption_color(widget):
+    """위젯(다이얼로그 등) 네이티브 타이틀바를 메인 헤더색(CAPTION_COLOR)으로 동기화."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        hwnd = int(widget.winId())
+        dwm = ctypes.windll.dwmapi
+        one = ctypes.c_int(1)
+        if dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(one), 4) != 0:
+            dwm.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(one), 4)
+
+        def cref(hexc):
+            hexc = hexc.lstrip("#")
+            r, g, b = int(hexc[0:2], 16), int(hexc[2:4], 16), int(hexc[4:6], 16)
+            return ctypes.c_int((b << 16) | (g << 8) | r)
+
+        dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(cref(CAPTION_COLOR)), 4)  # 배경
+        dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(cref(FG)), 4)             # 글자
+        dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(cref(BG3)), 4)            # 테두리
+    except Exception:
+        pass
+
+
+class _DialogCaptionFilter(QObject):
+    """모든 QDialog 가 뜰 때 타이틀바 색을 메인 헤더색과 똑같이 맞춘다."""
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtWidgets import QDialog as _QDialog
+        if event.type() == QEvent.Show and isinstance(obj, _QDialog):
+            QTimer.singleShot(0, lambda o=obj: apply_caption_color(o))
+        return False
 
 
 def app_icon():
@@ -97,7 +133,8 @@ YELLOW  = "#f1fa8c"
 BORDER  = "#34374a"   # 카드 테두리(은은하게)
 GAP     = "#0e0f13"   # 가장 진한색 — 여백/헤더/스플리터
 SIDE    = "#171922"   # 사이드바 — 카드보다 어두움(VSCode 스타일)
-CARD    = "#262834"   # 카드(문제/콘솔/터미널) — 여백보다 밝아 또렷이 구분
+CARD    = "#262834"   # 카드(문제/콘솔) — 여백보다 밝아 또렷이 구분
+TERM_BG = "#1d1f29"   # 터미널 카드 — 콘솔보다 살짝 더 진하게
 
 CODE_FAMILY = "Cascadia Code"
 MONO_FAMILY = "Consolas"
@@ -109,6 +146,7 @@ TIER_COLOR = {5: "#8a93b3", 4: "#50fa7b", 3: "#f1fa8c", 2: "#ffb86c", 1: "#ff555
 #  테마 커스터마이즈 — 여기 값만 바꾸면 프로그램 헤더 색이 바뀐다.
 # ─────────────────────────────────────────────────────────────────
 HEADER_BG    = "#262834"  # 헤더 색(=카드색). 여기 값만 바꾸면 헤더/네이티브 타이틀바 색이 바뀐다.
+DIALOG_BG    = "#2c2f3e"  # 다이얼로그 배경 — 헤더와 같은 계열로 동기화(살짝 밝게)
 HEADER_FG    = FG       # 헤더 글자색(브랜드 'code')
 BADGE_BG     = PINK     # 'T' 뱃지 배경색
 CAPTION_COLOR = HEADER_BG  # Windows 네이티브 타이틀바 색 (Win11 22000+ 에서 정확히 적용)
@@ -127,7 +165,7 @@ QMainWindow, QWidget {{ background: {GAP}; }}
 QLabel {{ background: transparent; }}   /* 타이틀/라벨은 뒤 카드색이 그대로 비치도록 */
 QSplitter {{ background: {GAP}; }}
 #TitleBar {{ background: {HEADER_BG}; }}
-#Panel {{ background: {CARD}; border-radius: 9px; }}
+#Panel {{ background: {TERM_BG}; border-radius: 9px; }}
 #PanelBG {{ background: {CARD}; border-radius: 9px; }}
 #Side {{ background: {SIDE}; border-radius: 9px; }}
 #Body {{ background: {GAP}; }}
@@ -152,6 +190,10 @@ QPushButton#Run {{ background:{PURPLE}; color:{BG3}; }}
 QPushButton#Run:hover {{ background:{PURPLE_D}; }}
 QPushButton#Ghost {{ background:{BG2}; }}
 QPushButton#Ghost:hover {{ background:{CUR}; }}
+QPushButton#ManageBtn {{ background:{BG2}; color:{FG}; border:1px solid {CUR};
+    border-radius:6px; padding:8px 12px; text-align:left; }}
+QPushButton#ManageBtn:hover {{ background:{CUR}; border-color:{PURPLE}; color:{CYAN}; }}
+QPushButton#ManageBtn:pressed {{ background:{PURPLE}; color:{BG3}; }}
 
 QPushButton#Seg {{ background:{BG2}; border-radius:0; padding:4px 11px; font-size:11px; }}
 QPushButton#Seg:hover {{ background:{CUR}; }}
@@ -174,7 +216,7 @@ QTextBrowser, QTextEdit, QPlainTextEdit {{
     background:{CARD}; border:none; selection-background-color:{CUR};
     selection-color:{FG};
 }}
-#Output {{ background:{CARD}; }}
+#Output {{ background:{TERM_BG}; }}
 #ProblemView, #ProblemBody {{ background:{CARD}; border:none; }}
 #CodeBox {{ background:{CARD}; border:1px solid {BORDER}; border-radius:6px; }}
 #DrillCard {{ background:{CARD}; border:1px solid {BORDER}; border-radius:10px; }}
@@ -187,26 +229,36 @@ QSlider#OpacitySlider::sub-page:horizontal {{ background:{PURPLE}; border-radius
 QSlider#OpacitySlider::handle:horizontal {{ width:12px; height:12px; margin:-5px 0; background:{PURPLE}; border-radius:6px; }}
 QSlider#OpacitySlider::handle:horizontal:hover {{ background:{PURPLE_D}; }}
 
-QScrollBar:vertical {{ background:transparent; width:7px; margin:3px 2px 3px 0; }}
-QScrollBar::handle:vertical {{ background:{CUR}; border-radius:3px; min-height:30px; }}
+QScrollBar:vertical {{ background:transparent; width:11px; margin:4px 2px 4px 0; }}
+QScrollBar::handle:vertical {{ background:{CUR}; border-radius:5px; min-height:36px; }}
 QScrollBar::handle:vertical:hover {{ background:{COMMENT}; }}
+QScrollBar::handle:vertical:pressed {{ background:{PURPLE}; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background:transparent; }}
-QScrollBar:horizontal {{ background:transparent; height:7px; margin:0 3px 2px 3px; }}
-QScrollBar::handle:horizontal {{ background:{CUR}; border-radius:3px; min-width:30px; }}
+QScrollBar:horizontal {{ background:transparent; height:11px; margin:0 4px 2px 4px; }}
+QScrollBar::handle:horizontal {{ background:{CUR}; border-radius:5px; min-width:36px; }}
 QScrollBar::handle:horizontal:hover {{ background:{COMMENT}; }}
+QScrollBar::handle:horizontal:pressed {{ background:{PURPLE}; }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width:0; }}
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background:transparent; }}
 
+/* 콘솔/터미널 사이 드래그 핸들 — 눈에 띄게(가운데 그립) */
 QSplitter::handle {{ background:{GAP}; }}
-QSplitter::handle:horizontal {{ width:6px; }}
-QSplitter::handle:vertical {{ height:6px; }}
+QSplitter::handle:horizontal {{ width:7px; }}
+QSplitter::handle:vertical {{ height:7px; }}
+QSplitter::handle:hover {{ background:{CUR}; }}
+QSplitter::handle:pressed {{ background:{PURPLE}; }}
 QToolTip {{ background:{BG3}; color:{FG}; border:1px solid {CUR}; }}
 
 QMenu {{ background:{BG2}; color:{FG}; border:1px solid {CUR}; padding:4px; }}
 QMenu::item {{ padding:6px 22px; border-radius:5px; }}
 QMenu::item:selected {{ background:{CUR}; color:{CYAN}; }}
 QMenu::separator {{ height:1px; background:{CUR}; margin:4px 8px; }}
+
+/* 다이얼로그/메시지 — 프로그램 헤더 색과 동기화(헤더보다 살짝 밝게 '연하게') */
+QDialog {{ background:{DIALOG_BG}; }}
+QMessageBox {{ background:{DIALOG_BG}; }}
+QMessageBox QLabel {{ background:transparent; color:{FG}; }}
 """
 
 
@@ -429,6 +481,54 @@ def pos_kr(pos):
     return " · ".join(POS_KR.get(x.strip(), x.strip()) for x in str(pos).split("/"))
 
 
+# 트리 아이템 커스텀 데이터 롤
+ROLE_TIER = Qt.UserRole + 2      # 티어 번호(1~5) 또는 None
+ROLE_SOLVED = Qt.UserRole + 3    # 해결 여부
+
+
+class TierDelegate(QStyledItemDelegate):
+    """문제 항목: 앞의 'T{n}'만 티어 색으로, 타이틀은 기본색, 해결 시 우측에 작은 초록 체크."""
+
+    def paint(self, painter, option, index):
+        tnum = index.data(ROLE_TIER)
+        if not tnum:
+            super().paint(painter, option, index)
+            return
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""                                   # 텍스트는 직접 그림
+        style = opt.widget.style() if opt.widget else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)   # 배경 + 아이콘
+
+        r = style.subElementRect(QStyle.SE_ItemViewItemText, opt, opt.widget)
+        painter.save()
+        painter.setFont(opt.font)
+        fm = painter.fontMetrics()
+        selected = bool(opt.state & QStyle.State_Selected)
+
+        tag = f"T{tnum}"
+        tag_w = fm.horizontalAdvance(tag)
+        painter.setPen(QColor(TIER_COLOR.get(tnum, FG)))
+        painter.drawText(QRect(r.left(), r.top(), tag_w + 4, r.height()),
+                         Qt.AlignVCenter | Qt.AlignLeft, tag)
+
+        x = r.left() + tag_w + 8
+        solved = bool(index.data(ROLE_SOLVED))
+        check_w = 16 if solved else 0
+        avail = max(0, r.right() - x - check_w - 2)
+        title = index.data(Qt.DisplayRole) or ""
+        painter.setPen(QColor(CYAN if selected else FG))
+        painter.drawText(QRect(x, r.top(), avail, r.height()),
+                         Qt.AlignVCenter | Qt.AlignLeft,
+                         fm.elidedText(str(title), Qt.ElideRight, avail))
+
+        if solved:
+            painter.setPen(QColor(GREEN))
+            painter.drawText(QRect(r.right() - check_w, r.top(), check_w, r.height()),
+                             Qt.AlignVCenter | Qt.AlignRight, "✓")
+        painter.restore()
+
+
 class ClickSlider(QSlider):
     """그루브 아무 곳이나 클릭하면 그 위치 값으로 즉시 이동.
     (기본 QSlider 는 그루브 클릭 시 페이지 스텝만큼만 이동해 클릭 위치와 어긋남)"""
@@ -596,16 +696,16 @@ class QuizDialog(QDialog):
         self.info.setText("창을 닫으세요.")
 
 
-class TypingDrillDialog(QDialog):
+class TypingDrillWidget(QWidget):
     """단어 암기 — 단어/뜻을 몇 번 깜빡여 보여준 뒤, 뜻을 보고 영어 단어를 타이핑해 맞춘다.
-    '그만하기'를 누르면 지금까지의 정답/오답 결과가 쭉 나온다."""
+    '그만하기'를 누르면 정답/오답 결과가 쭉 나온다. 다이얼로그/인라인 양쪽에서 재사용."""
 
-    def __init__(self, parent, words, db):
+    finished = Signal()
+
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("타이핑 암기")
-        self.resize(520, 470)
-        self.db = db
-        self.words = random.sample(list(words), len(words))
+        self.db = None
+        self.words = []
         self.idx = 0
         self.score = 0
         self.results = []          # (word, typed, ok)
@@ -667,7 +767,7 @@ class TypingDrillDialog(QDialog):
         self.stop_btn.clicked.connect(self._finish)
         self.close_btn = QPushButton("닫기")
         self.close_btn.setObjectName("Run")
-        self.close_btn.clicked.connect(self.accept)
+        self.close_btn.clicked.connect(self.finished.emit)
         self.close_btn.setVisible(False)
         row.addWidget(self.skip_btn)
         row.addStretch(1)
@@ -675,6 +775,19 @@ class TypingDrillDialog(QDialog):
         row.addWidget(self.close_btn)
         lay.addLayout(row)
 
+    def start(self, words, db):
+        """단어 묶음으로 드릴 시작/재시작."""
+        self.db = db
+        self.words = random.sample(list(words), len(words))
+        self.idx = 0
+        self.score = 0
+        self.results = []
+        self.card.setVisible(True)
+        self.feedback.setVisible(True)
+        self.result_view.setVisible(False)
+        self.skip_btn.setVisible(True)
+        self.stop_btn.setVisible(True)
+        self.close_btn.setVisible(False)
         self._next()
 
     def _stop_timer(self):
@@ -770,6 +883,40 @@ class TypingDrillDialog(QDialog):
         self.result_view.setVisible(True)
 
 
+class TypingDrillDialog(QDialog):
+    """타이핑 암기를 독립 창(모달)으로 — 트레이/메인창 숨김 상태에서 단독 실행용.
+    창 투명도 조절 슬라이더 포함."""
+
+    def __init__(self, parent, words, db):
+        super().__init__(parent)
+        self.setWindowTitle("영단어 타이핑 암기")
+        self.setWindowIcon(app_icon())
+        self.resize(420, 370)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(10, 6, 12, 0)
+        top.addStretch(1)
+        cap = QLabel("투명도")
+        cap.setStyleSheet(f"color:{COMMENT}; font-size:10px; background:transparent;")
+        top.addWidget(cap)
+        self.op = ClickSlider(Qt.Horizontal)
+        self.op.setObjectName("OpacitySlider")
+        self.op.setRange(20, 100)
+        self.op.setValue(100)
+        self.op.setFixedWidth(92)
+        self.op.valueChanged.connect(lambda v: self.setWindowOpacity(max(0.2, v / 100.0)))
+        top.addWidget(self.op)
+        lay.addLayout(top)
+
+        self.drill = TypingDrillWidget()
+        self.drill.finished.connect(self.accept)
+        lay.addWidget(self.drill, 1)
+        self.drill.start(words, db)
+
+
 # ───────────────────────── 설정 다이얼로그 ─────────────────────────
 
 class SettingsDialog(QDialog):
@@ -787,7 +934,10 @@ class SettingsDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("background:transparent;")
+        scroll.viewport().setStyleSheet("background:transparent;")
         body = QWidget()
+        body.setStyleSheet("background:transparent;")
         lay = QVBoxLayout(body)
         lay.setContentsMargins(22, 20, 22, 16)
         lay.setSpacing(7)
@@ -870,7 +1020,7 @@ class SettingsDialog(QDialog):
                           ("내 티어 초기화 (푼 기록 삭제)", parent._reset_tier),
                           ("환경 점검 (JDK / g++ / Node)", parent._env_check)]:
             b = QPushButton(label)
-            b.setObjectName("Ghost")
+            b.setObjectName("ManageBtn")
             b.clicked.connect(lambda _=False, fn=fn: (self.accept(), fn()))
             lay.addWidget(b)
         lay.addStretch(1)
@@ -1081,10 +1231,6 @@ class MainWindow(QMainWindow):
             event.ignore()
             self.hide()
             self.tray.show()
-            if not self._tray_hinted:
-                self._tray_hinted = True
-                self.tray.showMessage("code T", "트레이에서 계속 실행 중 — 아이콘을 클릭하면 다시 열려요.",
-                                      QSystemTrayIcon.Information, 3000)
             return
         # 종료
         self._cleanup_solutions()
@@ -1133,11 +1279,24 @@ class MainWindow(QMainWindow):
         self._tray_menu = QMenu()
         self._tray_menu.addAction("열기", self._show_normal)
         self._tray_menu.addAction("하이드 모드", self._tray_hide_mode)
+        # 영단어 깜빡임 암기 — 레벨 선택 → 메인창 없이 단독 다이얼로그로 진행
+        voc = self._tray_menu.addMenu("영단어 암기")
+        for lv in vocab.LEVELS:
+            voc.addAction(lv, lambda _=False, l=lv: self._tray_vocab_drill(l))
         self._tray_menu.addSeparator()
         self._tray_menu.addAction("종료", self._quit_app)
         self.tray.setContextMenu(self._tray_menu)
         self.tray.activated.connect(self._tray_activated)
         self.tray.show()
+
+    def _tray_vocab_drill(self, level):
+        """트레이에서 영단어 암기 — 해당 레벨에서 랜덤 추출, 메인창 없이 모달 다이얼로그로."""
+        words = vocab.BY_LEVEL.get(level, [])
+        if len(words) < 1:
+            return
+        n = self.settings.get_int("quiz_size", 10)
+        sample = random.sample(words, min(max(n, 10), len(words)))
+        TypingDrillDialog(self, sample, self.vocab_db).exec()
 
     def _tray_activated(self, reason):
         if reason in (QSystemTrayIcon.DoubleClick, QSystemTrayIcon.Trigger):
@@ -1585,7 +1744,23 @@ class MainWindow(QMainWindow):
         t = QLabel("탐색기")
         t.setObjectName("PanelTitle")
         sl.addWidget(t)
+
+        # 검색(디바운싱) — 입력 멈추고 잠시 뒤 트리 필터
+        self.search_box = QLineEdit()
+        self.search_box.setObjectName("SearchBox")
+        self.search_box.setPlaceholderText("문제·단어·레슨 검색…")
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.setStyleSheet(
+            f"background:{BG2}; color:{FG}; border:1px solid {BORDER}; border-radius:6px; padding:4px 8px;")
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
+        self._search_timer.timeout.connect(self._apply_search)
+        self.search_box.textChanged.connect(lambda _: self._search_timer.start())
+        sl.addWidget(self.search_box)
+
         self.tree = QTreeWidget()
+        self.tree.setItemDelegate(TierDelegate(self.tree))   # 티어 색/체크 커스텀 렌더
         self.tree.setHeaderHidden(True)
         self.tree.setIndentation(14)
         self.tree.setRootIsDecorated(False)          # 기본 분기 화살표 숨김(직접 ▸/▾ 표시)
@@ -1699,14 +1874,21 @@ class MainWindow(QMainWindow):
         ol.addWidget(self.out, 1)
         right.addWidget(outp)
         right.setSizes([560, 250])
-        split.addWidget(right)
+        # 우측을 스택으로: 0=코드+터미널, 1=타이핑 암기(영단어 학습 중 인라인)
+        self.right_stack = QStackedWidget()
+        self.right_stack.addWidget(right)
+        self.typing_widget = TypingDrillWidget()
+        self.typing_widget.finished.connect(self._end_inline_typing)
+        self.right_stack.addWidget(self.typing_widget)
+        split.addWidget(self.right_stack)
 
         # 텍스트 영역(문제/console/terminal/입력)의 viewport 배경을 카드색과 정확히 일치
         # (QSS 'background'는 viewport 까지 적용 안 되어 팔레트 Base 색이 새어 나오는 걸 방지)
         for w in (self.prob, self.editor, self.out, self.stdin_box):
+            bg = TERM_BG if w in (self.out, self.stdin_box) else CARD
             pal = w.palette()
-            pal.setColor(QPalette.Base, QColor(CARD))
-            pal.setColor(QPalette.Window, QColor(CARD))
+            pal.setColor(QPalette.Base, QColor(bg))
+            pal.setColor(QPalette.Window, QColor(bg))
             w.setPalette(pal)
             w.viewport().setAutoFillBackground(True)
 
@@ -1774,6 +1956,7 @@ class MainWindow(QMainWindow):
             node = self._group_item(rk, f"{profile.RANK_EMOJI[r]} {profile.RANK_KR[r]} ({len(lst)})")
             for p in lst:
                 self._add_problem(node, p)
+        rk.setExpanded(True)        # 랭크만 상시 펼침(하위 브론즈~플래티넘은 닫힌 채로)
 
         # 4) 실전 (유형별)
         pr = self._group_item(self.tree, "실전", top=True)
@@ -1806,7 +1989,6 @@ class MainWindow(QMainWindow):
             if self._ic_file is not None:
                 pit.setIcon(0, self._ic_file)
             self.item_exam[id(pit)] = preset
-        ex.setExpanded(True)
 
         # 6) 가이드
         if lessons.GUIDES:
@@ -1850,15 +2032,13 @@ class MainWindow(QMainWindow):
         return int(t[-1]) if t[-1:].isdigit() else None
 
     def _apply_item_style(self, it, p, solved):
-        """트리 아이템에 티어 태그(T5~T1) + 티어 색상 적용. 해결은 체크 아이콘으로 표시."""
-        tnum = self._tier_num(p)
-        tag = f"T{tnum} " if tnum else ""
+        """티어/해결 정보를 데이터로 저장 → TierDelegate 가 'T{n}'만 색칠, 타이틀 기본색, 우측 체크."""
+        it.setText(0, p.title)
         if self._ic_file is not None:
-            it.setText(0, f"{tag}{p.title}")
-            it.setIcon(0, self._ic_done if solved else self._ic_file)
-        else:
-            it.setText(0, ("✓ " if solved else "   ") + f"{tag}{p.title}")
-        it.setForeground(0, QColor(TIER_COLOR.get(tnum, FG)))
+            it.setIcon(0, self._ic_file)
+        it.setData(0, ROLE_TIER, self._tier_num(p))
+        it.setData(0, ROLE_SOLVED, solved)
+        it.setForeground(0, QColor(FG))
 
     def _add_problem(self, parent, p):
         solved = p.id in self.solved
@@ -1872,6 +2052,28 @@ class MainWindow(QMainWindow):
         solved = p.id in self.solved
         for it in self.problem_item.get(p.id, []):
             self._apply_item_style(it, p, solved)
+
+    def _apply_search(self):
+        """검색어로 트리 필터(디바운싱). 그룹은 하위에 매칭이 있으면 펼쳐서 보여준다."""
+        q = self.search_box.text().strip().lower()
+
+        def visit(item):
+            if item.childCount() > 0:
+                child_match = False
+                for i in range(item.childCount()):
+                    if visit(item.child(i)):
+                        child_match = True
+                vis = child_match or (q in item.text(0).lower())
+                item.setHidden(bool(q) and not vis)
+                if q and child_match:
+                    item.setExpanded(True)
+                return vis
+            match = (not q) or (q in item.text(0).lower())
+            item.setHidden(not match)
+            return match
+
+        for i in range(self.tree.topLevelItemCount()):
+            visit(self.tree.topLevelItem(i))
 
     # ───────────────────────── 동작 ─────────────────────────
 
@@ -2061,8 +2263,29 @@ class MainWindow(QMainWindow):
 
     def _show_code_panel(self, visible):
         """영단어 학습 중엔 코드 에디터+터미널(우측)을 숨기고 단어 카드만 본다."""
-        if hasattr(self, "right"):
-            self.right.setVisible(visible)
+        self._blur_content(False)
+        if hasattr(self, "right_stack"):
+            self.right_stack.setCurrentWidget(self.right)
+            self.right_stack.setVisible(visible)
+
+    def _blur_content(self, on):
+        """가운데 문제/단어 카드에 블러 효과(타이핑 암기 인라인 시 뒤를 흐리게)."""
+        if not hasattr(self, "content"):
+            return
+        if on:
+            eff = QGraphicsBlurEffect(self)
+            eff.setBlurRadius(8)
+            self.content.setGraphicsEffect(eff)
+        else:
+            self.content.setGraphicsEffect(None)
+
+    def _end_inline_typing(self):
+        self._blur_content(False)
+        self.right_stack.setCurrentWidget(self.right)
+        self.right_stack.setVisible(False)
+        if self._mode == "vocab":
+            self._render_vocab(self.vocab_entry)
+            self._set_status("단어 학습 · Run → 타이핑 암기 · 우클릭 → 퀴즈", CYAN)
 
     def _open_vocab(self, entry):
         self._mode = "vocab"
@@ -2114,12 +2337,16 @@ class MainWindow(QMainWindow):
         self._render_vocab(self.vocab_entry)
 
     def _vocab_typing(self):
+        """메인창: 가운데 단어 카드를 블러 처리하고 우측에 타이핑 암기 카드를 띄워 진행."""
         words = getattr(self, "vocab_words", None) or vocab.BY_LEVEL.get(self.vocab_level, [])
         if not words:
             self._set_status("단어가 없습니다", ORANGE)
             return
-        TypingDrillDialog(self, words, self.vocab_db).exec()
-        self._render_vocab(self.vocab_entry)
+        self._blur_content(True)
+        self.right_stack.setCurrentWidget(self.typing_widget)
+        self.right_stack.setVisible(True)
+        self.typing_widget.start(words, self.vocab_db)
+        self._set_status("타이핑 암기 중 — 단어 깜빡 후 입력 · '그만하기'로 결과", CYAN)
 
     # ───────────────────────── 실전 모의고사 ─────────────────────────
 
@@ -2658,6 +2885,8 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)   # 트레이 보내기 지원 — 종료는 명시적으로만
     app.setWindowIcon(app_icon())          # 작업표시줄/전역 아이콘
+    app._caption_filter = _DialogCaptionFilter()        # 모든 다이얼로그 타이틀바 색 동기화
+    app.installEventFilter(app._caption_filter)
     app.setStyleSheet(QSS)
     win = MainWindow()
     win.show()

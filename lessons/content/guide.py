@@ -140,4 +140,55 @@ LESSONS = [
             "}\n"
         ),
     ),
+
+    Lesson(
+        id="guide-05-node",
+        lang="guide", level="설치",
+        title="JavaScript(Node.js) 설치·적용",
+        summary="Node.js 설치 후 node 확인",
+        explanation=(
+            "JavaScript 채점에는 Node.js 런타임이 필요합니다(현재 PC엔 없을 수 있음).\n\n"
+            "[설치]\n"
+            "1) https://nodejs.org 접속 → LTS 버전 Windows Installer(.msi) 다운로드\n"
+            "2) 설치 시 'Add to PATH' 옵션은 기본으로 켜져 있음 → 그대로 설치\n"
+            "   (또는 winget install OpenJS.NodeJS.LTS)\n\n"
+            "[적용 확인] 새 터미널에서:\n"
+            "   node --version   → v20.x 처럼 나오면 OK\n\n"
+            "[프로그램 적용] node 가 PATH 에 잡히면 자동 인식됩니다.\n"
+            "설치 후 프로그램을 다시 켜면 상단 토글에서 JS 를 선택해 채점할 수 있습니다."
+        ),
+        usage="설치 후 재시작 → 상단 토글 JS 선택 → 코드 작성 → Run/제출.",
+        cons="JS 가 필요 없으면 안 깔아도 되고, 그 경우 JS 채점만 비활성화됩니다.",
+        code="",
+    ),
+
+    Lesson(
+        id="guide-06-js-howto",
+        lang="guide", level="사용법",
+        title="JavaScript로 코딩테스트 푸는 법",
+        summary="fs.readFileSync(0) 로 표준입력 읽기",
+        explanation=(
+            "이 프로그램의 JS 채점은 Node.js 기반이며 표준입출력(stdin/stdout)을 사용합니다.\n\n"
+            "[입력 읽기] 브라우저의 prompt 가 아니라, 표준입력 전체를 한 번에 읽습니다.\n"
+            "  const data = require('fs').readFileSync(0, 'utf8').trim();\n"
+            "  const lines = data.split('\\n');          // 줄 단위\n"
+            "  const [a, b] = lines[0].split(' ').map(Number);  // 공백 분리 → 숫자\n\n"
+            "[출력] console.log 로 출력합니다.\n"
+            "  console.log(a + b);\n\n"
+            "[팁]\n"
+            " - 숫자는 split 후 Number/parseInt 로 변환(문자열 + 문자열은 이어붙음 주의).\n"
+            " - 입력이 많으면 lines 를 인덱스로 순회하거나, 한 줄을 split(' ')/map(Number).\n"
+            " - 출력이 많으면 배열에 모아 console.log(arr.join('\\n')) 로 한 번에."
+        ),
+        usage="상단 토글 JS → 코드 작성 → Run(F5). 입력칸에 값 넣고 실행해 확인. (Node 설치 필요)",
+        cons="함수 구현형 문제는 JS 채점이 안 되고, 표준입출력형만 채점됩니다.",
+        code=(
+            "// 표준입력 전체 읽기 (Node.js)\n"
+            "const data = require('fs').readFileSync(0, 'utf8').trim();\n"
+            "const lines = data.split('\\n');\n"
+            "// 예: 첫 줄에 두 수가 공백으로 주어질 때\n"
+            "const [a, b] = lines[0].split(' ').map(Number);\n"
+            "console.log(a + b);\n"
+        ),
+    ),
 ]
