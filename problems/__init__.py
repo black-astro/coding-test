@@ -101,6 +101,10 @@ for _r in RANKS:
         if not _p.reference_cpp and _p.id in CPP:
             _p.reference_cpp = CPP[_p.id]
 
+# 보정: 중복 제거 + 티어 재조정(랭크 재배치 포함)
+from engine.problem_fixups import apply_to_rank_buckets as _fixup
+_fixup(ALL)
+
 # id 기준 정렬
 for _r in RANKS:
     ALL[_r].sort(key=lambda p: p.id)

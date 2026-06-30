@@ -109,6 +109,10 @@ for _plist in ALL.values():
         if not _p.reference_cpp and _p.id in _CPP:
             _p.reference_cpp = _CPP[_p.id]
 
+# 보정: 중복 제거 + 티어 재조정
+from engine.problem_fixups import apply_to_category_buckets as _fixup
+_fixup(ALL)
+
 BY_ID = {p.id: p for plist in ALL.values() for p in plist}
 
 
