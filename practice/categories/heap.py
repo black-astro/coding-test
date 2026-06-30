@@ -13,75 +13,91 @@ PROBLEMS = [
         id="heap-01",
         rank="Gold",
         title="더 맵게",
-        style="프로그래머스",
+        style="실전",
         topic="우선순위큐",
-        type="func",
-        func_name="solution",
+        type="stdin",
         description=(
             "모든 음식의 스코빌 지수를 K 이상으로 만들려고 한다. 가장 맵지 않은 음식과 "
             "두 번째로 맵지 않은 음식을 섞어 새로운 음식을 만들며, 새 음식의 스코빌 지수는 "
             "(가장 맵지 않은 음식의 지수) + (두 번째로 맵지 않은 음식의 지수) * 2 이다. "
-            "모든 음식의 스코빌 지수가 K 이상이 될 때까지 섞은 횟수를 구하세요. "
-            "아무리 섞어도 모두 K 이상으로 만들 수 없으면 -1 을 반환합니다."
+            "모든 음식의 스코빌 지수가 K 이상이 될 때까지 섞은 횟수를 구하라. "
+            "아무리 섞어도 모두 K 이상으로 만들 수 없으면 -1 을 출력한다."
         ),
         input_desc=(
-            "scoville : 각 음식의 스코빌 지수 리스트 (1 ≤ len ≤ 1000000), "
-            "K : 목표 스코빌 지수"
+            "첫 줄에 음식 개수 N (1 ≤ N ≤ 1,000,000) 과 목표 K. "
+            "둘째 줄에 각 음식의 스코빌 지수 N개가 공백으로 주어진다."
         ),
-        output_desc="모든 음식을 K 이상으로 만들기 위한 최소 섞기 횟수 (불가능하면 -1)",
+        output_desc="모든 음식을 K 이상으로 만들기 위한 최소 섞기 횟수 (불가능하면 -1).",
         examples=[
-            {"args": [[1, 2, 3, 9, 10, 12], 7], "output": 2},
-            {"args": [[2, 3, 1, 5], 10], "output": 3},
+            {"input": "6 7\n1 2 3 9 10 12", "output": "2"},
+            {"input": "4 10\n2 3 1 5", "output": "3"},
         ],
         hints=[
-            "매번 '가장 작은 두 값' 을 꺼내 섞어 다시 넣는 과정을 반복합니다. 매번 정렬하면 느리니 효율적인 구조가 필요합니다.",
-            "최소 힙(heapq)을 쓰세요. 항상 가장 작은 값이 맨 위에 오므로, 두 번 pop 해 섞은 값을 push 하면 됩니다.",
-            "heapify 후, 힙의 최솟값(heap[0])이 K 미만인 동안: a=pop, b=pop, push(a+b*2), count+=1. 원소가 1개만 남았는데 그 값이 K 미만이면 -1.",
+            "매번 '가장 작은 두 값' 을 꺼내 섞어 다시 넣는 과정을 반복한다. 매번 정렬하면 느리니 효율적인 구조가 필요하다.",
+            "최소 힙(우선순위 큐)을 쓰라. 항상 가장 작은 값이 맨 위에 오므로, 두 번 꺼내 섞은 값을 다시 넣으면 된다.",
+            "heapify 후, 힙의 최솟값이 K 미만인 동안: a=pop, b=pop, push(a+b*2), count+=1. 원소가 1개만 남았는데 그 값이 K 미만이면 -1.",
         ],
         testcases=[
-            {"args": [[1, 2, 3, 9, 10, 12], 7], "expected": 2},
-            {"args": [[2, 3, 1, 5], 10], "expected": 3},
-            {"args": [[5, 6, 7], 5], "expected": 0},
-            {"args": [[1], 7], "expected": -1},
-            {"args": [[1, 1], 7], "expected": -1},
+            {"input": "6 7\n1 2 3 9 10 12", "output": "2"},
+            {"input": "4 10\n2 3 1 5", "output": "3"},
+            {"input": "3 5\n5 6 7", "output": "0"},
+            {"input": "1 7\n1", "output": "-1"},
+            {"input": "2 7\n1 1", "output": "-1"},
+            {"input": "1 0\n0", "output": "0"},
         ],
         reference_py=(
-            "import heapq\n"
-            "\n"
-            "def solution(scoville, K):\n"
-            "    heap = list(scoville)\n"
-            "    heapq.heapify(heap)\n"
-            "    count = 0\n"
-            "    while len(heap) > 1 and heap[0] < K:\n"
-            "        a = heapq.heappop(heap)\n"
-            "        b = heapq.heappop(heap)\n"
-            "        heapq.heappush(heap, a + b * 2)\n"
-            "        count += 1\n"
-            "    return count if heap[0] >= K else -1\n"
+            "import sys, heapq\n"
+            "d = sys.stdin.buffer.read().split()\n"
+            "n, k = int(d[0]), int(d[1])\n"
+            "h = list(map(int, d[2:2+n]))\n"
+            "heapq.heapify(h)\n"
+            "c = 0\n"
+            "while len(h) > 1 and h[0] < k:\n"
+            "    a = heapq.heappop(h); b = heapq.heappop(h)\n"
+            "    heapq.heappush(h, a + b * 2); c += 1\n"
+            "print(c if h[0] >= k else -1)\n"
         ),
         reference_java=(
             "import java.util.*;\n"
-            "class Solution {\n"
-            "    public int solution(int[] scoville, int K) {\n"
+            "import java.io.*;\n"
+            "public class Main {\n"
+            "    public static void main(String[] args) throws IOException {\n"
+            "        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));\n"
+            "        StringTokenizer st = new StringTokenizer(br.readLine());\n"
+            "        int n = Integer.parseInt(st.nextToken());\n"
+            "        long k = Long.parseLong(st.nextToken());\n"
             "        PriorityQueue<Long> pq = new PriorityQueue<>();\n"
-            "        for (int s : scoville) pq.add((long) s);\n"
-            "        int count = 0;\n"
-            "        while (pq.size() > 1 && pq.peek() < K) {\n"
-            "            long a = pq.poll();\n"
-            "            long b = pq.poll();\n"
-            "            pq.add(a + b * 2);\n"
-            "            count++;\n"
+            "        st = new StringTokenizer(br.readLine());\n"
+            "        for (int i = 0; i < n; i++) pq.add(Long.parseLong(st.nextToken()));\n"
+            "        int c = 0;\n"
+            "        while (pq.size() > 1 && pq.peek() < k) {\n"
+            "            long a = pq.poll(), b = pq.poll();\n"
+            "            pq.add(a + b * 2); c++;\n"
             "        }\n"
-            "        return pq.peek() >= K ? count : -1;\n"
+            "        System.out.println(pq.peek() >= k ? c : -1);\n"
             "    }\n"
             "}\n"
         ),
+        reference_cpp=(
+            "#include <bits/stdc++.h>\n"
+            "using namespace std;\n"
+            "int main(){\n"
+            "    int n; long long k; scanf(\"%d %lld\", &n, &k);\n"
+            "    priority_queue<long long, vector<long long>, greater<long long>> pq;\n"
+            "    for (int i = 0; i < n; i++) { long long x; scanf(\"%lld\", &x); pq.push(x); }\n"
+            "    int c = 0;\n"
+            "    while ((int)pq.size() > 1 && pq.top() < k) {\n"
+            "        long long a = pq.top(); pq.pop(); long long b = pq.top(); pq.pop();\n"
+            "        pq.push(a + b * 2); c++;\n"
+            "    }\n"
+            "    printf(\"%d\\n\", pq.top() >= k ? c : -1);\n"
+            "    return 0;\n"
+            "}\n"
+        ),
         template_py=(
-            "import heapq\n"
-            "# 더 맵게 : 모든 음식을 K 이상으로 만드는 최소 섞기 횟수 (불가능 -1)\n"
-            "def solution(scoville, K):\n"
-            "    answer = 0\n"
-            "    return answer\n"
+            "import sys, heapq\n"
+            "data = sys.stdin.read().split()\n"
+            "# 첫 줄 N K, 둘째 줄 스코빌 N개. 최소 섞기 횟수를 출력(불가능 -1).\n"
         ),
     ),
 

@@ -13,86 +13,102 @@ PROBLEMS = [
         id="union-01",
         rank="Gold",
         title="네트워크 그룹 수",
-        style="프로그래머스",
+        style="실전",
         topic="유니온파인드",
-        type="func",
-        func_name="solution",
+        type="stdin",
         description=(
             "컴퓨터 n대가 있고, 일부는 케이블로 직접 연결되어 있다. A가 B와 연결되어 있고 "
             "B가 C와 연결되어 있으면 A와 C도 같은 네트워크에 속한다. 연결 관계는 "
-            "n x n 인접 행렬 computers 로 주어지며, computers[i][j]=1 이면 i번과 j번이 직접 연결되어 있다. "
-            "(자기 자신 computers[i][i] 는 항상 1, 행렬은 대칭이다.) 전체 네트워크의 개수를 구하세요."
+            "n x n 인접 행렬로 주어지며, 행렬[i][j]=1 이면 i번과 j번이 직접 연결되어 있다. "
+            "(자기 자신 행렬[i][i] 는 항상 1, 행렬은 대칭이다.) 전체 네트워크의 개수를 구하라."
         ),
         input_desc=(
-            "n : 컴퓨터 수 (1 ≤ n ≤ 200), "
-            "computers : n x n 인접 행렬 (0/1, 0-based)"
+            "첫 줄에 컴퓨터 수 n (1 ≤ n ≤ 200). 다음 n개의 줄에 n x n 인접 행렬(0/1, 0-based)이 "
+            "공백으로 구분되어 주어진다."
         ),
-        output_desc="서로 분리된 네트워크의 개수",
+        output_desc="서로 분리된 네트워크의 개수.",
         examples=[
-            {"args": [3, [[1, 1, 0], [1, 1, 0], [0, 0, 1]]], "output": 2},
-            {"args": [3, [[1, 1, 0], [1, 1, 1], [0, 1, 1]]], "output": 1},
+            {"input": "3\n1 1 0\n1 1 0\n0 0 1", "output": "2"},
+            {"input": "3\n1 1 0\n1 1 1\n0 1 1", "output": "1"},
         ],
         hints=[
-            "서로 연결된 컴퓨터들을 하나의 '그룹'으로 묶고, 마지막에 그룹이 몇 개인지 세는 문제입니다.",
-            "유니온파인드(분리 집합)를 쓰세요. computers[i][j]==1 인 모든 쌍을 union 하고, 서로 다른 루트의 개수를 세면 됩니다. (DFS/BFS 로도 가능)",
-            "parent=list(range(n)); 모든 i<j 에 대해 computers[i][j]==1 이면 union(i,j); 답은 len({find(i) for i in range(n)}).",
+            "서로 연결된 컴퓨터들을 하나의 '그룹'으로 묶고, 마지막에 그룹이 몇 개인지 세는 문제다.",
+            "유니온파인드(분리 집합)를 쓰라. 행렬[i][j]==1 인 모든 쌍을 union 하고, 서로 다른 루트의 개수를 세면 된다. (DFS/BFS 로도 가능)",
+            "parent=list(range(n)); 모든 i<j 에 대해 행렬[i][j]==1 이면 union(i,j); 답은 서로 다른 find(i) 개수.",
         ],
         testcases=[
-            {"args": [3, [[1, 1, 0], [1, 1, 0], [0, 0, 1]]], "expected": 2},
-            {"args": [3, [[1, 1, 0], [1, 1, 1], [0, 1, 1]]], "expected": 1},
-            {"args": [3, [[1, 0, 0], [0, 1, 0], [0, 0, 1]]], "expected": 3},
-            {"args": [1, [[1]]], "expected": 1},
-            {"args": [4, [[1, 1, 0, 0], [1, 1, 0, 0], [0, 0, 1, 1], [0, 0, 1, 1]]], "expected": 2},
+            {"input": "3\n1 1 0\n1 1 0\n0 0 1", "output": "2"},
+            {"input": "3\n1 1 0\n1 1 1\n0 1 1", "output": "1"},
+            {"input": "3\n1 0 0\n0 1 0\n0 0 1", "output": "3"},
+            {"input": "1\n1", "output": "1"},
+            {"input": "4\n1 1 0 0\n1 1 0 0\n0 0 1 1\n0 0 1 1", "output": "2"},
         ],
         reference_py=(
-            "def solution(n, computers):\n"
-            "    parent = list(range(n))\n"
-            "\n"
-            "    def find(x):\n"
-            "        while parent[x] != x:\n"
-            "            parent[x] = parent[parent[x]]\n"
-            "            x = parent[x]\n"
-            "        return x\n"
-            "\n"
-            "    def union(a, b):\n"
-            "        ra, rb = find(a), find(b)\n"
-            "        if ra != rb:\n"
-            "            parent[ra] = rb\n"
-            "\n"
-            "    for i in range(n):\n"
-            "        for j in range(i + 1, n):\n"
-            "            if computers[i][j] == 1:\n"
-            "                union(i, j)\n"
-            "    return len({find(i) for i in range(n)})\n"
+            "import sys\n"
+            "d = sys.stdin.read().split()\n"
+            "idx = 0\n"
+            "n = int(d[idx]); idx += 1\n"
+            "parent = list(range(n))\n"
+            "def find(x):\n"
+            "    while parent[x] != x:\n"
+            "        parent[x] = parent[parent[x]]; x = parent[x]\n"
+            "    return x\n"
+            "for i in range(n):\n"
+            "    for j in range(n):\n"
+            "        v = int(d[idx]); idx += 1\n"
+            "        if v == 1 and j > i:\n"
+            "            ra, rb = find(i), find(j)\n"
+            "            if ra != rb: parent[ra] = rb\n"
+            "print(len({find(i) for i in range(n)}))\n"
         ),
         reference_java=(
-            "class Solution {\n"
-            "    int[] parent;\n"
-            "    int find(int x) {\n"
+            "import java.util.*;\n"
+            "import java.io.*;\n"
+            "public class Main {\n"
+            "    static int[] parent;\n"
+            "    static int find(int x) {\n"
             "        while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }\n"
             "        return x;\n"
             "    }\n"
-            "    void union(int a, int b) {\n"
-            "        int ra = find(a), rb = find(b);\n"
-            "        if (ra != rb) parent[ra] = rb;\n"
-            "    }\n"
-            "    public int solution(int n, int[][] computers) {\n"
+            "    public static void main(String[] args) throws IOException {\n"
+            "        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));\n"
+            "        StreamTokenizer st = new StreamTokenizer(br);\n"
+            "        st.nextToken(); int n = (int) st.nval;\n"
             "        parent = new int[n];\n"
             "        for (int i = 0; i < n; i++) parent[i] = i;\n"
             "        for (int i = 0; i < n; i++)\n"
-            "            for (int j = i + 1; j < n; j++)\n"
-            "                if (computers[i][j] == 1) union(i, j);\n"
-            "        java.util.Set<Integer> roots = new java.util.HashSet<>();\n"
+            "            for (int j = 0; j < n; j++) {\n"
+            "                st.nextToken(); int v = (int) st.nval;\n"
+            "                if (v == 1 && j > i) { int ra = find(i), rb = find(j); if (ra != rb) parent[ra] = rb; }\n"
+            "            }\n"
+            "        Set<Integer> roots = new HashSet<>();\n"
             "        for (int i = 0; i < n; i++) roots.add(find(i));\n"
-            "        return roots.size();\n"
+            "        System.out.println(roots.size());\n"
             "    }\n"
             "}\n"
         ),
+        reference_cpp=(
+            "#include <bits/stdc++.h>\n"
+            "using namespace std;\n"
+            "int parent[205];\n"
+            "int find(int x){ while(parent[x]!=x){ parent[x]=parent[parent[x]]; x=parent[x]; } return x; }\n"
+            "int main(){\n"
+            "    int n; scanf(\"%d\", &n);\n"
+            "    for (int i = 0; i < n; i++) parent[i] = i;\n"
+            "    for (int i = 0; i < n; i++) for (int j = 0; j < n; j++) {\n"
+            "        int v; scanf(\"%d\", &v);\n"
+            "        if (v == 1 && j > i) { int ra = find(i), rb = find(j); if (ra != rb) parent[ra] = rb; }\n"
+            "    }\n"
+            "    set<int> roots;\n"
+            "    for (int i = 0; i < n; i++) roots.insert(find(i));\n"
+            "    printf(\"%d\\n\", (int)roots.size());\n"
+            "    return 0;\n"
+            "}\n"
+        ),
         template_py=(
-            "# 네트워크 그룹 수 : 인접 행렬에서 분리된 네트워크 개수\n"
-            "def solution(n, computers):\n"
-            "    answer = 0\n"
-            "    return answer\n"
+            "import sys\n"
+            "d = sys.stdin.read().split()\n"
+            "# 첫 값 n, 이후 n*n 인접행렬. 분리된 네트워크 개수를 출력.\n"
         ),
     ),
 
