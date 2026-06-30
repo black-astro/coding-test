@@ -92,3 +92,83 @@ def apply_to_category_buckets(ALL):
         ALL[c] = [p for p in ALL[c] if p.id not in EXCLUDE]
         for p in ALL[c]:
             _retier(p)
+
+
+# ──────────────────────────────────────────────────────────────
+# 효율성 대형 테스트케이스 — 로드 시 시드 기반으로 생성(소스 비대화 방지).
+#  같은 알고리즘으로 정답을 계산해 붙이므로 reference 와 항상 일치한다.
+#  naive O(N^2) 풀이는 시간 초과하도록 N 을 크게 잡는다.
+# ──────────────────────────────────────────────────────────────
+import random as _random
+
+
+def _boost_silver03():
+    rng = _random.Random(20260101)
+    n = 50000
+    A = rng.sample(range(-10 ** 8, 10 ** 8), n)
+    s = set(A)
+    m = 50000
+    Q = [rng.choice(A) if rng.random() < 0.5 else rng.randint(-10 ** 8, 10 ** 8) for _ in range(m)]
+    inp = f"{n}\n{' '.join(map(str, A))}\n{m}\n{' '.join(map(str, Q))}"
+    out = ' '.join('1' if x in s else '0' for x in Q)
+    return inp, out
+
+
+def _boost_gi09():
+    rng = _random.Random(20260102)
+    n = 50000
+    arr = [rng.randint(-10 ** 9, 10 ** 9) for _ in range(n)]
+    ans = [-1] * n
+    st = []
+    for i in range(n):
+        while st and arr[st[-1]] < arr[i]:
+            ans[st.pop()] = arr[i]
+        st.append(i)
+    inp = f"{n}\n{' '.join(map(str, arr))}"
+    out = ' '.join(map(str, ans))
+    return inp, out
+
+
+def _boost_plat02():
+    import heapq
+    rng = _random.Random(20260103)
+    v, e = 20000, 60000
+    edges = []
+    graph = [[] for _ in range(v + 1)]
+    for i in range(2, v + 1):                 # 연결 보장(체인) → INF 없음
+        w = rng.randint(1, 100)
+        edges.append((i - 1, i, w)); graph[i - 1].append((i, w))
+    for _ in range(e - (v - 1)):
+        a = rng.randint(1, v); b = rng.randint(1, v); w = rng.randint(1, 100)
+        edges.append((a, b, w)); graph[a].append((b, w))
+    INF = float('inf')
+    dist = [INF] * (v + 1); dist[1] = 0; pq = [(0, 1)]
+    while pq:
+        d, u = heapq.heappop(pq)
+        if d > dist[u]:
+            continue
+        for nx, w in graph[u]:
+            nd = d + w
+            if nd < dist[nx]:
+                dist[nx] = nd; heapq.heappush(pq, (nd, nx))
+    lines = [f"{v} {len(edges)} 1"] + [f"{a} {b} {w}" for a, b, w in edges]
+    inp = "\n".join(lines)
+    out = "\n".join('INF' if dist[i] == INF else str(dist[i]) for i in range(1, v + 1))
+    return inp, out
+
+
+TESTCASE_BOOST = {
+    "silver-03": _boost_silver03,   # 이분탐색(set) — naive 선형탐색 TLE
+    "gi-09": _boost_gi09,           # 단조 스택 — naive O(N^2) TLE
+    "platinum-02": _boost_plat02,   # 다익스트라 — naive O(V^2)/Bellman TLE
+}
+
+
+def apply_testcase_boost(by_id):
+    """효율성 대형 케이스를 해당 문제 testcases 에 추가."""
+    for pid, fn in TESTCASE_BOOST.items():
+        p = by_id.get(pid)
+        if p is None:
+            continue
+        inp, out = fn()
+        p.testcases = list(p.testcases) + [{"input": inp, "output": out}]

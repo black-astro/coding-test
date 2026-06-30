@@ -111,6 +111,10 @@ for _r in RANKS:
 
 BY_ID = {p.id: p for r in RANKS for p in ALL[r]}
 
+# 효율성 대형 테스트케이스 보강(로드 시 생성)
+from engine.problem_fixups import apply_testcase_boost as _boost
+_boost(BY_ID)
+
 
 def count(rank: str) -> int:
     return len(ALL[rank])
