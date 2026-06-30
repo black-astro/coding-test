@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStackedWidget, QScrollArea, QSystemTrayIcon, QSlider,
                                QStyle, QStyleOptionSlider)
 
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -1449,12 +1449,17 @@ class MainWindow(QMainWindow):
             for p in plist:
                 self._add_problem(node, p)
 
-        # 6) 시험 — 단일 도전 항목
+        # 6) 시험 — 대표 도전 + 프리셋 5종
         ex = self._group_item(self.tree, "시험", top=True)
         it = QTreeWidgetItem(ex, ["🏁 실전 코딩테스트 도전"])
         if self._ic_file is not None:
             it.setIcon(0, self._ic_file)
         self.item_exam[id(it)] = exam.CHALLENGE
+        for preset in exam.PRESETS:
+            pit = QTreeWidgetItem(ex, [preset["title"]])
+            if self._ic_file is not None:
+                pit.setIcon(0, self._ic_file)
+            self.item_exam[id(pit)] = preset
         ex.setExpanded(True)
 
         # 6) 가이드
