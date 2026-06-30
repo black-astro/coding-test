@@ -8,6 +8,9 @@ DEFAULTS = {
     "keep_solutions": "1",     # 풀이 파일(solutions/) 보관 (끄면 채점 후 정리)
     "show_stdin": "1",         # 터미널에 입력(stdin) 칸 표시
     "quiz_size": "10",         # 영단어 퀴즈 문항 수
+    "reset_on_start": "1",     # 시작 시 작성 코드·터미널 초기화
+    "autofill_stdin": "1",     # Run 시 입력칸 비면 예제 입력 자동 사용
+    "editor_font_size": "11",  # 에디터/터미널 글자 크기(pt)
 }
 
 

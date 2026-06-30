@@ -4,7 +4,7 @@
 코딩 테스트 연습용 데스크톱 프로그램입니다. 난이도별 문제 풀이, 유형별 학습, 언어 문법 강의,
 모의고사, 그리고 **실행 시간·메모리까지 측정하는 자동 채점**을 하나의 앱(PySide6, 다크 테마)에서 제공합니다.
 
-![version](https://img.shields.io/badge/version-1.1.0-blue) ![langs](https://img.shields.io/badge/lang-Python%20%C2%B7%20Java%20%C2%B7%20C%2B%2B%20%C2%B7%20JS-44cc88) ![platform](https://img.shields.io/badge/platform-Windows-555)
+![version](https://img.shields.io/badge/version-1.1.3-blue) ![langs](https://img.shields.io/badge/lang-Python%20%C2%B7%20Java%20%C2%B7%20C%2B%2B%20%C2%B7%20JS-44cc88) ![platform](https://img.shields.io/badge/platform-Windows-555)
 
 ---
 
@@ -47,7 +47,7 @@
 따로 설치할 것이 없습니다.
 
 1. GitHub **[Releases](https://github.com/black-astro/coding-test/releases)** 페이지로 이동합니다.
-2. 최신 버전의 **`codeT-v1.1.2-win64.zip`** 파일을 내려받습니다.
+2. 최신 버전의 **`codeT-v1.1.3-win64.zip`** 파일을 내려받습니다.
 3. 압축을 풉니다(원하는 폴더 어디든 가능).
 4. 풀린 폴더 안의 **`codeT.exe`** 를 더블클릭하면 실행됩니다.
 
@@ -228,6 +228,7 @@ python tools/coverage.py        # 난이도/유형 커버리지 출력
 
 | 버전 | 주요 변경 |
 |------|-----------|
+| **1.1.3** | 영단어 타이핑 암기 모드(단어 깜빡→입력→정답/오답), 영단어 학습 시 에디터·터미널 숨김, 영단어 품사 한국어 표기 + 50개 묶음 정리, 랭크 목록에 티어(T5~T1) 색상 표시, 사이드바 하단 사용법·설정 버튼, 설정 옵션 세분화, 시작 시 코드 초기화 옵션 |
 | **1.1.2** | 시험 메뉴에 프리셋 5종(입문·표준·구현 집중·고난도·실전 풀세트) 노출 |
 | **1.1.1** | 집중 모드에서 창 축소 + 반응형 헤더(Run→R·제출 아이콘), 전체 투명도 조절 슬라이더(우측 하단, 10~100%), 시작 기본 단계 표시(입문 1), 언어별·문제별 채점 제한, 모의고사 개편(기본 7문제·플래티넘 1~2 필수·합산 점수 합격) |
 | **1.1.0** | 집중(하이드) 모드, 시스템 트레이(닫기 동작 선택), 반응형 레이아웃, 문제 화면 네이티브 렌더링, 로고/아이콘 정비, 실행 시 콘솔 창이 뜨지 않도록 개선 |
