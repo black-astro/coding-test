@@ -1,14 +1,35 @@
-# code T — 코딩 테스트 연습 프로그램
+<div align="center">
+
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=0:000000,45:022a0e,100:00ff41&height=180&section=header&text=code%20T&fontSize=50&fontColor=00ff41&fontAlignY=38&desc=Coding%20Test%20Practice%20Desktop%20App&descAlignY=60&descSize=15&animation=fadeIn"/>
+
+**코딩 테스트 연습용 데스크톱 프로그램**
 
 프로그래밍을 처음 시작하는 사람도 **기초 문법부터 알고리즘까지 단계적으로 실력을 올릴 수 있도록** 만든
 코딩 테스트 연습용 데스크톱 프로그램입니다. 난이도별 문제 풀이, 유형별 학습, 언어 문법 강의,
 모의고사, 그리고 **실행 시간·메모리까지 측정하는 자동 채점**을 하나의 앱(PySide6, 다크 테마)에서 제공합니다.
 
-![version](https://img.shields.io/badge/version-1.1.8-blue) ![langs](https://img.shields.io/badge/lang-Python%20%C2%B7%20Java%20%C2%B7%20C%2B%2B%20%C2%B7%20JS-44cc88) ![platform](https://img.shields.io/badge/platform-Windows-555)
+<br>
+
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![PySide6](https://img.shields.io/badge/PySide6-41CD52?style=for-the-badge&logo=qt&logoColor=white)
+![Java](https://img.shields.io/badge/Java-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
+![C++](https://img.shields.io/badge/C%2B%2B-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)
+![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black)
+![Windows](https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)
+
+<br>
+
+[![version](https://img.shields.io/badge/version-1.1.8-00ff41?style=flat-square&labelColor=0d0208)](https://github.com/black-astro/coding-test/releases)
+[![langs](https://img.shields.io/badge/lang-Python%20%C2%B7%20Java%20%C2%B7%20C%2B%2B%20%C2%B7%20JS-00ff41?style=flat-square&labelColor=0d0208)](#-2-주요-기능)
+[![platform](https://img.shields.io/badge/platform-Windows-00ff41?style=flat-square&labelColor=0d0208)](#-3-설치-및-실행)
+
+</div>
+
+<br>
 
 ---
 
-## 1. 개요
+## `$ 1. 개요`
 
 | 항목 | 내용 |
 |------|------|
@@ -23,7 +44,7 @@
 
 ---
 
-## 2. 주요 기능
+## `$ 2. 주요 기능`
 
 | 기능 | 설명 |
 |------|------|
@@ -39,7 +60,7 @@
 
 ---
 
-## 3. 설치 및 실행
+## `$ 3. 설치 및 실행`
 
 ### 무설치판으로 시작하기 (일반 사용자 — 이 방법을 권장합니다)
 
@@ -82,7 +103,7 @@ python main.py                        # CLI 버전(선택)
 
 ---
 
-## 4. 화면 구성
+## `$ 4. 화면 구성`
 
 ```
 ┌ [로고] [≡] [내 단계·게이지]  [Python|Java|C++|JS]      [집중] [설정] [Run] [제출] ┐
@@ -112,7 +133,7 @@ python main.py                        # CLI 버전(선택)
 
 ---
 
-## 5. 사용 방법
+## `$ 5. 사용 방법`
 
 > 아래 설명은 **무설치판(`codeT.exe`)** 을 실행한 화면 기준입니다. Releases 에서 zip 을 받아 압축을 풀고
 > `codeT.exe` 를 실행한 상태에서 그대로 따라 하면 됩니다.
@@ -150,7 +171,7 @@ python main.py                        # CLI 버전(선택)
 
 ---
 
-## 6. 채점 방식
+## `$ 6. 채점 방식`
 
 | 표시 | 의미 |
 |------|------|
@@ -177,7 +198,7 @@ python main.py                        # CLI 버전(선택)
 
 ---
 
-## 7. 프로젝트 구조
+## `$ 7. 프로젝트 구조`
 
 ```
 codeTest/
@@ -204,7 +225,7 @@ codeTest/
 
 ---
 
-## 8. 빌드 및 검증
+## `$ 8. 빌드 및 검증`
 
 ### 무설치(포터블) 빌드
 
@@ -224,7 +245,7 @@ python tools/coverage.py        # 난이도/유형 커버리지 출력
 
 ---
 
-## 9. 변경 이력
+## `$ 9. 변경 이력`
 
 | 버전 | 주요 변경 |
 |------|-----------|
@@ -245,3 +266,14 @@ python tools/coverage.py        # 난이도/유형 커버리지 출력
 이 프로그램의 목적은 **하나의 앱으로 문법을 익히고, 기초부터 차근차근 코딩 테스트를 연습하며,
 모의고사로 실력을 점검**하도록 돕는 것입니다. 처음이라 막막한 사람도 단계별 힌트를 따라가며
 스스로 풀어 내는 경험을 쌓을 수 있게 만드는 것을 지향합니다.
+
+
+<br>
+
+---
+
+<div align="center">
+<sub>Built with PySide6 &nbsp;·&nbsp; 문법부터 알고리즘까지, 하나의 앱에서 단계적으로</sub>
+
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=0:00ff41,45:022a0e,100:000000&height=100&section=footer"/>
+</div>
