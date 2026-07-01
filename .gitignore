@@ -9,3 +9,5 @@ runtime/
 .idea/
 .vscode/
 .DS_Store
+*.zip
+build_log.txt

@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
                                QTabWidget)
 
-APP_VERSION = "1.1.7"
+APP_VERSION = "1.1.8"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -2554,8 +2554,6 @@ class MainWindow(QMainWindow):
         h.append(f"<div style='color:{COMMENT};font-size:11px;margin-top:3px;'>{kr} · {esc(l.level)}</div>")
         if l.summary:
             h.append(f"<div style='color:{CYAN};margin-top:5px;'>{esc(l.summary)}</div>")
-        if l.explanation:
-            h.append(sec("설명") + f"<div>{esc(l.explanation)}</div>")
         if l.usage:
             h.append(sec("어디에 · 어떻게 쓰나") + f"<div style='color:{GREEN};'>{esc(l.usage)}</div>")
         if l.cons:
@@ -2569,6 +2567,11 @@ class MainWindow(QMainWindow):
             if l.lang in ("python", "java", "cpp"):
                 h.append(f"<div style='color:{COMMENT};font-size:11px;margin-top:4px;'>"
                          f"→ 아래 console 에 코드가 올라가 있어요. Run(F5) 으로 직접 실행해 보세요.</div>")
+        # 상세 설명은 최하단에 배치 — 더 알고 싶은 사람만 스크롤해서 읽도록
+        if l.explanation:
+            h.append(f"<div style='border-top:1px solid {BORDER};margin:24px 0 0;'></div>")
+            h.append(sec("상세 설명 (더 알고 싶다면 ↓)"))
+            h.append(f"<div>{esc(l.explanation)}</div>")
         h.append("</div>")
         self._show_html(h)
 

@@ -4,7 +4,7 @@
 코딩 테스트 연습용 데스크톱 프로그램입니다. 난이도별 문제 풀이, 유형별 학습, 언어 문법 강의,
 모의고사, 그리고 **실행 시간·메모리까지 측정하는 자동 채점**을 하나의 앱(PySide6, 다크 테마)에서 제공합니다.
 
-![version](https://img.shields.io/badge/version-1.1.7-blue) ![langs](https://img.shields.io/badge/lang-Python%20%C2%B7%20Java%20%C2%B7%20C%2B%2B%20%C2%B7%20JS-44cc88) ![platform](https://img.shields.io/badge/platform-Windows-555)
+![version](https://img.shields.io/badge/version-1.1.8-blue) ![langs](https://img.shields.io/badge/lang-Python%20%C2%B7%20Java%20%C2%B7%20C%2B%2B%20%C2%B7%20JS-44cc88) ![platform](https://img.shields.io/badge/platform-Windows-555)
 
 ---
 
@@ -47,7 +47,7 @@
 따로 설치할 것이 없습니다.
 
 1. GitHub **[Releases](https://github.com/black-astro/coding-test/releases)** 페이지로 이동합니다.
-2. 최신 버전의 **`codeT-v1.1.7-win64.zip`** 파일을 내려받습니다.
+2. 최신 버전의 **`codeT-v1.1.8-win64.zip`** 파일을 내려받습니다.
 3. 압축을 풉니다(원하는 폴더 어디든 가능).
 4. 풀린 폴더 안의 **`codeT.exe`** 를 더블클릭하면 실행됩니다.
 
@@ -228,6 +228,7 @@ python tools/coverage.py        # 난이도/유형 커버리지 출력
 
 | 버전 | 주요 변경 |
 |------|-----------|
+| **1.1.8** | 언어 문법 학습 설명을 보고서톤(문어체·[개요]/[핵심 개념]/[코드 분석]/[유의 사항] 섹션 구조)으로 재정리, 상세 설명을 예시 코드 뒤 최하단으로 이동(구분선 + "상세 설명" 헤더)해 필요한 사람만 열람하도록 개선 |
 | **1.1.7** | 언어 문법 학습 전면 개선 — 6개 언어(Python·Java·C++·JavaScript·CSS·SCSS) 기초·중급·고급 15개 파일의 설명을 프로그래밍 완전 초보자용으로 재작성(비유·코드 한 줄씩 해설·왜/주의할 점). 예시 코드는 그대로라 실행 검증 전부 통과 |
 | **1.1.6** | 문제 세트 정비 — 중복 문제 제거 + 티어 재조정(골드 T4 쏠림 해소·과대평가 정상화), 대표 func 문제 stdin 전환(Java/C++ 채점), 효율성 대형 테스트케이스 보강, 2026 공백 신규 문제(미로 BFS·트리의 지름·연구소) |
 | **1.1.5** | 경험치(XP) 기반 랭크 시스템(난이도별 차등 XP·누적 곡선)·현재 랭크까지만 풀리는 랭크 잠금(상위는 🔒)·잠금 해제 옵션, 영단어 문장 완성 모드(한글 번역 보고 입력)+힌트·하이드 모드 단어 카드·레벨 전체 테스트·트레이 두 모드, X 종료 컨펌, 설정 탭화·글자 크기 8부터, 티어 색상 정리(빨강·주황·노랑·하늘·회색)·해결 표시 초록 아이콘 |
