@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
                                QTabWidget)
 
-APP_VERSION = "1.1.6"
+APP_VERSION = "1.1.7"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
