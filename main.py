@@ -47,9 +47,12 @@ def load_progress() -> set:
 
 
 def save_progress(solved: set):
-    SOLUTIONS_DIR.mkdir(exist_ok=True)
-    PROGRESS_FILE.write_text(json.dumps(sorted(solved), ensure_ascii=False, indent=0),
-                             encoding="utf-8")
+    try:
+        SOLUTIONS_DIR.mkdir(exist_ok=True)
+        PROGRESS_FILE.write_text(json.dumps(sorted(solved), ensure_ascii=False),
+                                 encoding="utf-8")
+    except OSError as e:
+        print(f"(진행 저장 실패: {e})")
 
 
 SOLVED = load_progress()
@@ -77,6 +80,20 @@ def fmt_mem(kb):
     if kb >= 1024:
         return f"{kb/1024:.1f} MB"
     return f"{kb} KB"
+
+
+def clip(text, max_chars=400, max_lines=8):
+    """대용량 입출력(효율성 케이스 등)이 콘솔을 도배하지 않도록 잘라서 표시."""
+    s = str(text)
+    lines = s.splitlines()
+    clipped = False
+    if len(lines) > max_lines:
+        s = "\n".join(lines[:max_lines])
+        clipped = True
+    if len(s) > max_chars:
+        s = s[:max_chars]
+        clipped = True
+    return s + (" …(생략)" if clipped else "")
 
 
 # ───────────────────────── 솔루션 파일 ─────────────────────────
@@ -183,7 +200,12 @@ def choose_language():
         session["lang"] = m[sel]
         ok = runner.compiler_available(session["lang"])
         name = runner.LANGUAGES[session["lang"]]["name"]
-        print(f"→ 현재 언어: {name}" + ("" if ok else "  (※ 컴파일러 미설치 — 채점하려면 설치 필요)"))
+        if ok:
+            print(f"→ 현재 언어: {name}")
+        else:
+            print(f"→ 현재 언어: {name}")
+            print(f"  ※ {name} 컴파일러가 설치되어 있지 않아 이 언어로는 채점할 수 없습니다.")
+            print("    (설치 전까지는 '채점하기'가 막힙니다 — README 의 설치 안내 참고)")
     else:
         print("변경하지 않았습니다.")
 
@@ -236,9 +258,9 @@ def run_judge(p):
               f"· {c.time_ms:.0f}ms · {fmt_mem(c.peak_mem_kb)}")
         if not c.passed:
             if c.verdict in ("WA",):
-                print(f"      입력    : {c.given_input}")
-                print(f"      기대값  : {c.expected}")
-                print(f"      내 출력 : {c.actual}")
+                print(f"      입력    : {clip(c.given_input)}")
+                print(f"      기대값  : {clip(c.expected)}")
+                print(f"      내 출력 : {clip(c.actual)}")
             elif c.verdict == "RE" and c.error:
                 print(f"      에러    : {c.error}")
             elif c.verdict == "TLE":
@@ -279,21 +301,34 @@ def show_reference(p, lang):
         print(f"{name} 정답 코드가 아직 준비되지 않았습니다.")
 
 
+def reference_menu(p):
+    """정답 코드 보기 — 언어를 골라서 본다. (Enter = 현재 언어)"""
+    cur = session["lang"] if session["lang"] in ("python", "java", "cpp") else "python"
+    cur_name = {"python": "Python", "java": "Java", "cpp": "C++"}[cur]
+    sel = ask(f"정답 언어  1) Python  2) Java  3) C++  (Enter={cur_name})> ")
+    m = {"": cur, "1": "python", "2": "java", "3": "cpp"}
+    if sel in m:
+        show_reference(p, m[sel])
+    else:
+        print("잘못된 입력입니다. (1~3 또는 Enter)")
+
+
 # ───────────────────────── 문제 메뉴 ─────────────────────────
 
 def problem_menu(plist, idx, ctx_label=""):
     """plist 의 idx 번째 문제를 다룬다. 반환: 다음에 볼 idx 또는 None(뒤로)."""
     p = plist[idx]
     show_problem(p)
+    hint_level = 0          # 힌트는 1→2→3단계 순서로 자동 공개
     while True:
         cur_lang = runner.LANGUAGES[session["lang"]]["name"]
         print("\n" + "-" * 48)
         loc = f"{ctx_label} " if ctx_label else ""
         print(f"[{p.id}] {p.title}   | 현재 언어: {cur_lang}  ({loc}{idx+1}/{len(plist)})")
+        next_hint = f"{min(hint_level + 1, 3)}단계" + ("(거의 정답)" if hint_level >= 2 else "")
         print("  1) 문제 다시 보기      2) 언어 선택")
         print("  3) 풀기 시작           4) 채점하기")
-        print("  5) 힌트 1단계   6) 힌트 2단계   7) 힌트 3단계(거의 정답)")
-        print("  8) 정답 Python   9) 정답 Java   10) 정답 C++")
+        print(f"  5) 힌트 보기 — 다음: {next_hint}     6) 정답 코드 보기")
         print("  n) 다음 문제     p) 이전 문제     0) 목록으로")
         sel = ask("선택> ").lower()
         if sel == "1":
@@ -305,17 +340,10 @@ def problem_menu(plist, idx, ctx_label=""):
         elif sel == "4":
             run_judge(p)
         elif sel == "5":
-            show_hint(p, 1)
+            hint_level = min(hint_level + 1, 3)
+            show_hint(p, hint_level)
         elif sel == "6":
-            show_hint(p, 2)
-        elif sel == "7":
-            show_hint(p, 3)
-        elif sel == "8":
-            show_reference(p, "python")
-        elif sel == "9":
-            show_reference(p, "java")
-        elif sel == "10":
-            show_reference(p, "cpp")
+            reference_menu(p)
         elif sel == "n":
             if idx + 1 < len(plist):
                 return idx + 1
@@ -327,7 +355,7 @@ def problem_menu(plist, idx, ctx_label=""):
         elif sel == "0":
             return None
         else:
-            print("잘못된 입력입니다.")
+            print("잘못된 입력입니다. (1~6, n, p, 0)")
 
 
 def rank_menu(rank):
@@ -348,7 +376,7 @@ def rank_menu(rank):
             while idx is not None:
                 idx = problem_menu(plist, idx, problems.RANK_KR[rank])
         else:
-            print("잘못된 입력입니다.")
+            print(f"잘못된 입력입니다. (1~{len(plist)} 또는 0)")
 
 
 # ───────────────────────── 유형별 실전 연습 ─────────────────────────
@@ -377,7 +405,7 @@ def category_menu(cat):
             while idx is not None:
                 idx = problem_menu(plist, idx, cat)
         else:
-            print("잘못된 입력입니다.")
+            print(f"잘못된 입력입니다. (1~{len(plist)} 또는 0)")
 
 
 def practice_menu():
@@ -396,7 +424,7 @@ def practice_menu():
         if sel.isdigit() and 1 <= int(sel) <= len(practice.CATEGORIES):
             category_menu(practice.CATEGORIES[int(sel) - 1])
         else:
-            print("잘못된 입력입니다.")
+            print(f"잘못된 입력입니다. (1~{len(practice.CATEGORIES)} 또는 0)")
 
 
 def main_menu():
@@ -424,7 +452,7 @@ def main_menu():
         elif sel.isdigit() and 1 <= int(sel) <= len(problems.RANKS):
             rank_menu(problems.RANKS[int(sel) - 1])
         else:
-            print("잘못된 입력입니다.")
+            print(f"잘못된 입력입니다. (1~{len(problems.RANKS)}, P, L, 0)")
 
 
 if __name__ == "__main__":

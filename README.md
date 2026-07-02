@@ -19,7 +19,7 @@
 
 <br>
 
-[![version](https://img.shields.io/badge/version-1.1.8-00ff41?style=flat-square&labelColor=0d0208)](https://github.com/black-astro/coding-test/releases)
+[![version](https://img.shields.io/badge/version-1.1.9-00ff41?style=flat-square&labelColor=0d0208)](https://github.com/black-astro/coding-test/releases)
 [![langs](https://img.shields.io/badge/lang-Python%20%C2%B7%20Java%20%C2%B7%20C%2B%2B%20%C2%B7%20JS-00ff41?style=flat-square&labelColor=0d0208)](#-2-주요-기능)
 [![platform](https://img.shields.io/badge/platform-Windows-00ff41?style=flat-square&labelColor=0d0208)](#-3-설치-및-실행)
 
@@ -68,7 +68,7 @@
 따로 설치할 것이 없습니다.
 
 1. GitHub **[Releases](https://github.com/black-astro/coding-test/releases)** 페이지로 이동합니다.
-2. 최신 버전의 **`codeT-v1.1.8-win64.zip`** 파일을 내려받습니다.
+2. 최신 버전의 **`codeT-v1.1.9-win64.zip`** 파일을 내려받습니다.
 3. 압축을 풉니다(원하는 폴더 어디든 가능).
 4. 풀린 폴더 안의 **`codeT.exe`** 를 더블클릭하면 실행됩니다.
 
@@ -212,8 +212,8 @@ codeTest/
 │   ├── topics.py        종목(알고리즘) 분류
 │   ├── variants.py      문제 변형(리셋) 생성기
 │   └── exam.py          모의고사 구성·채점
-├── problems/            난이도별 문제(236) + 메타 + 정답 코드
-├── practice/            유형별 실전 문제(51)
+├── problems/            난이도별 문제(223) + 메타 + 정답 코드
+├── practice/            유형별 실전 문제(53)
 ├── lessons/             문법 강의(149) + 환경 가이드
 ├── vocab/               영어 단어(5,190) + 진행 기록
 ├── img/                 로고/아이콘 리소스
@@ -239,8 +239,10 @@ python build.py        # dist/codeT/codeT.exe 생성
 ### 검증
 
 ```bash
-python tools/selftest.py        # 모든 정답 코드가 자기 테스트케이스를 통과하는지 확인
+python tools/selftest.py        # Python 정답 코드가 자기 테스트케이스를 통과하는지 확인
 python tools/coverage.py        # 난이도/유형 커버리지 출력
+python tools/verify_batch.py problems/batches/bronze_a.py   # 배치 파일 1개 정밀 검증
+python tools/verify_lessons.py lessons/content/py_mid.py    # 레슨 예시 코드 실행 검증
 ```
 
 ---
@@ -249,6 +251,7 @@ python tools/coverage.py        # 난이도/유형 커버리지 출력
 
 | 버전 | 주요 변경 |
 |------|-----------|
+| **1.1.9** | 안정성·사용성 대규모 개선 — 채점 입출력 UTF-8 통일(한글/이모지 출력 크래시·오판정 해결), 채점 오류 격리 + 전역 예외 훅(크래시 다이얼로그 제거, `solutions/error.log` 기록), TLE 시 프로세스 트리 강제 종료(멈춤 방지), 문제 구경만 해도 `solutions/` 폴더가 쌓이던 문제 해결, 시작 시 코드 초기화 기본 OFF(작성 코드 보존), 헤더 💡 힌트 버튼·문제 트리 우클릭(힌트/정답/풀이 폴더), func 문제 비Python 언어 잠금, 영단어 🔁 오답 복습 모드(우클릭·트레이) + 오답 우선 출제, WA 대용량 출력 절단, CLI 메뉴 간소화 |
 | **1.1.8** | 언어 문법 학습 설명을 보고서톤(문어체·[개요]/[핵심 개념]/[코드 분석]/[유의 사항] 섹션 구조)으로 재정리, 상세 설명을 예시 코드 뒤 최하단으로 이동(구분선 + "상세 설명" 헤더)해 필요한 사람만 열람하도록 개선 |
 | **1.1.7** | 언어 문법 학습 전면 개선 — 6개 언어(Python·Java·C++·JavaScript·CSS·SCSS) 기초·중급·고급 15개 파일의 설명을 프로그래밍 완전 초보자용으로 재작성(비유·코드 한 줄씩 해설·왜/주의할 점). 예시 코드는 그대로라 실행 검증 전부 통과 |
 | **1.1.6** | 문제 세트 정비 — 중복 문제 제거 + 티어 재조정(골드 T4 쏠림 해소·과대평가 정상화), 대표 func 문제 stdin 전환(Java/C++ 채점), 효율성 대형 테스트케이스 보강, 2026 공백 신규 문제(미로 BFS·트리의 지름·연구소) |

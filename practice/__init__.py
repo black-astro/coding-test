@@ -8,9 +8,14 @@ ALL        : 카테고리명 -> Problem 리스트
 BY_ID      : 문제 id -> Problem
 """
 
+import sys
 import importlib
 import pkgutil
 from pathlib import Path
+
+
+def _warn(msg):
+    print(f"[practice] 경고: {msg}", file=sys.stderr)
 
 # 대기업 코테 빈출 유형 (우선순위순)
 CATEGORIES = [
@@ -58,11 +63,27 @@ if _cat_dir.exists():
 for _name in (_names or _CATEGORY_MODULES):
     try:
         _m = importlib.import_module(f"practice.categories.{_name}")
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as _e:
+        _warn(f"카테고리 모듈 '{_name}' 를 건너뜁니다 — {_e}")
         continue
     _cat = getattr(_m, "CATEGORY", None)
+    if _cat not in ALL:
+        # CATEGORY 누락/오타 → 메뉴에 안 뜨고 조용히 사라지는 것을 방지
+        _warn(f"모듈 '{_name}' 의 CATEGORY '{_cat}' 는 목록에 없습니다 — 건너뜁니다.")
+        continue
     for _p in getattr(_m, "PROBLEMS", []):
-        ALL.setdefault(_cat, []).append(_p)
+        ALL[_cat].append(_p)
+
+# 중복 id 제거(먼저 실린 문제 유지) + 경고
+for _c in CATEGORIES:
+    _seen, _uniq = set(), []
+    for _p in ALL[_c]:
+        if _p.id in _seen:
+            _warn(f"중복 id '{_p.id}' ({_c}) — 나중 정의를 무시합니다.")
+            continue
+        _seen.add(_p.id)
+        _uniq.append(_p)
+    ALL[_c] = _uniq
 
 # 카테고리·기본 제한·티어 채우기
 #  실전 문제는 rank 만 있고 세부 티어가 없었음 → rank 기준으로 티어(상위권 1~3) 부여.

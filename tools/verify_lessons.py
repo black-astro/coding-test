@@ -16,12 +16,21 @@ sys.path.insert(0, str(ROOT))
 
 from engine.runner import compile_solution, run_process, compiler_available
 
+if len(sys.argv) < 2:
+    print("사용법: python tools/verify_lessons.py <레슨파일경로>")
+    print("예:     python tools/verify_lessons.py lessons/content/py_mid.py")
+    sys.exit(2)
+
 path = Path(sys.argv[1])
 if not path.is_absolute():
     path = ROOT / path
 spec = importlib.util.spec_from_file_location("lessonmod", path)
 mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+try:
+    spec.loader.exec_module(mod)
+except Exception as e:
+    print(f"[FAIL] {path.name} 로드 실패: {type(e).__name__}: {e}")
+    sys.exit(1)
 
 FN = {"python": "sol.py", "java": "Main.java", "cpp": "main.cpp", "javascript": "solution.js"}
 fail = 0

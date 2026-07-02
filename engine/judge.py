@@ -116,9 +116,16 @@ def judge(problem, source_path, lang: str = "python") -> JudgeResult:
             unsupported="함수 구현형 문제는 Python 으로만 채점됩니다. (Java/C++ 정답 코드는 참고용으로 볼 수 있어요)",
         )
 
-    if problem.type == "func":
-        return _judge_func(problem, source_path)
-    return _judge_stdin(problem, source_path, lang)
+    try:
+        if problem.type == "func":
+            return _judge_func(problem, source_path)
+        return _judge_stdin(problem, source_path, lang)
+    except Exception as e:
+        # 채점기 내부 오류(테스트케이스 형식 문제 등)가 앱 크래시로 이어지지 않게 격리
+        return JudgeResult(
+            0, 0, [], False, lang=lang,
+            unsupported=f"채점 중 내부 오류가 발생했습니다: {type(e).__name__}: {e}",
+        )
 
 
 def _judge_stdin(problem, source_path: Path, lang: str) -> JudgeResult:
@@ -156,7 +163,8 @@ def _judge_func(problem, source_path: Path) -> JudgeResult:
     kill_s = max(tl_ms * 3, tl_ms + 2000) / 1000.0
 
     cases = []
-    with tempfile.TemporaryDirectory() as td:
+    # ignore_cleanup_errors: TLE 로 강제 종료된 자식이 파일을 물고 있어도(Windows) 정리 예외 방지
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         for i, tc in enumerate(problem.testcases, start=1):
             args = tc["args"]
             expected = _normalize(repr(tc["expected"]))

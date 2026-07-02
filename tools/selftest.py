@@ -12,27 +12,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import tempfile
+
 import problems
 from engine.judge import judge as judge_problem
 
-TMP = ROOT / "solutions" / "_selftest"
-TMP.mkdir(parents=True, exist_ok=True)
-
 fail = 0
 total = 0
-for rank in problems.RANKS:
-    for p in problems.ALL[rank]:
-        total += 1
-        path = TMP / f"{p.id}.py"
-        path.write_text(p.reference_py, encoding="utf-8")
-        res = judge_problem(p, path)
-        status = "OK " if res.accepted else "FAIL"
-        if not res.accepted:
-            fail += 1
-        print(f"[{status}] {p.id:<14} {p.title:<28} {res.passed}/{res.total}")
-        if not res.accepted:
-            fc = res.first_fail
-            print(f"        ↳ 입력={fc.given_input!r} 기대={fc.expected!r} 실제={fc.actual!r} 에러={fc.error!r}")
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+    TMP = Path(td)
+    for rank in problems.RANKS:
+        for p in problems.ALL[rank]:
+            total += 1
+            path = TMP / f"{p.id}.py"
+            path.write_text(p.reference_py, encoding="utf-8")
+            res = judge_problem(p, path)
+            status = "OK " if res.accepted else "FAIL"
+            if not res.accepted:
+                fail += 1
+            print(f"[{status}] {p.id:<14} {p.title:<28} {res.passed}/{res.total}")
+            if not res.accepted:
+                fc = res.first_fail
+                if fc:
+                    print(f"        ↳ 입력={fc.given_input!r} 기대={fc.expected!r} 실제={fc.actual!r} 에러={fc.error!r}")
+                elif res.unsupported or res.compile_error:
+                    print(f"        ↳ {res.unsupported or res.compile_error}")
 
 print("-" * 60)
 print(f"총 {total}문제 중 통과 {total - fail}, 실패 {fail}")

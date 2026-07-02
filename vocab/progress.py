@@ -47,3 +47,19 @@ class VocabDB:
             "COALESCE(SUM(known),0) FROM word_stat")
         n, c, w, k = cur.fetchone()
         return {"words": n or 0, "correct": c or 0, "wrong": w or 0, "known": k or 0}
+
+    def wrong_set(self) -> set:
+        """한 번이라도 틀린 적 있고 아직 '외움' 표시가 안 된 단어들 (오답 복습용)."""
+        return {r[0] for r in self.conn.execute(
+            "SELECT word FROM word_stat WHERE wrong > 0 AND known = 0")}
+
+    def weight_map(self) -> dict:
+        """단어 → 출제 가중치. 많이 틀렸고 덜 맞힌 단어일수록 크다."""
+        out = {}
+        for word, c, w, k in self.conn.execute(
+                "SELECT word, correct, wrong, known FROM word_stat"):
+            if k:
+                out[word] = 0.3          # 외운 단어는 가끔만
+            else:
+                out[word] = 1.0 + w * 2.0 - min(c, 3) * 0.25
+        return out

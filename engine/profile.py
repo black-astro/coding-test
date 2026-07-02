@@ -75,10 +75,12 @@ def compute(solved_ids: set, all_problems) -> dict:
         cum += rxp_total[r]
 
     # 현재 랭크 = 누적 XP 가 진입 임계값을 넘은 가장 높은 랭크
+    # (문제 목록이 비어 총 XP 가 0이면 Bronze 고정 — 전 랭크 임계값 0 오판 방지)
     cur_idx = 0
-    for i, r in enumerate(RANK_ORDER):
-        if score >= entry[r]:
-            cur_idx = i
+    if max_score > 0:
+        for i, r in enumerate(RANK_ORDER):
+            if score >= entry[r]:
+                cur_idx = i
     cur = RANK_ORDER[cur_idx]
 
     # 현재 랭크 안에서 세부 티어(5→1)

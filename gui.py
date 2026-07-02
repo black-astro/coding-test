@@ -8,6 +8,7 @@
 - ▶ 채점(F5) → 케이스별 시간/메모리 + 정답/오답, 통과 시 🎉 성공
 """
 
+import os
 import sys
 import re
 import html
@@ -32,7 +33,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
                                QTabWidget)
 
-APP_VERSION = "1.1.8"
+APP_VERSION = "1.1.9"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -490,11 +491,39 @@ def pos_kr(pos):
     return " · ".join(POS_KR.get(x.strip(), x.strip()) for x in str(pos).split("/"))
 
 
-def drill_sample(words, cap=30):
-    """학습 문항 추출 — 50개 이하면 전부(셔플), 초과(전체 레벨 등)면 cap 개 랜덤."""
+def weighted_pick(words, n, db=None):
+    """n개 추출 — db 가 있으면 틀린 적 많고 덜 외운 단어를 우선 뽑는다(가중치 무작위)."""
     pool = list(words)
-    n = len(pool) if len(pool) <= 50 else cap
-    return random.sample(pool, n)
+    n = min(n, len(pool))
+    if db is None or n == len(pool):
+        return random.sample(pool, n)
+    try:
+        wm = db.weight_map()
+    except Exception:
+        return random.sample(pool, n)
+    weights = [max(0.1, wm.get(w.word, 1.0)) for w in pool]
+    picked = []
+    for _ in range(n):
+        total = sum(weights)
+        r = random.random() * total
+        acc = 0.0
+        for i, wt in enumerate(weights):
+            acc += wt
+            if r <= acc or i == len(pool) - 1:
+                picked.append(pool.pop(i))
+                weights.pop(i)
+                break
+    return picked
+
+
+def drill_sample(words, cap=30, db=None):
+    """학습 문항 추출 — 50개 이하면 전부(셔플), 초과(전체 레벨 등)면 cap 개.
+    db 를 주면 오답이 많은 단어가 우선 출제된다."""
+    pool = list(words)
+    if len(pool) <= 50:
+        random.shuffle(pool)
+        return pool
+    return weighted_pick(pool, cap, db)
 
 
 # 트리 아이템 커스텀 데이터 롤
@@ -748,7 +777,8 @@ class TypingDrillWidget(QWidget):
         cl.addStretch(1)
         self.word_label = QLabel("")
         self.word_label.setAlignment(Qt.AlignCenter)
-        self.word_label.setStyleSheet(f"color:{CYAN}; font-size:34px; font-weight:bold;")
+        self.word_label.setStyleSheet(f"color:{CYAN}; font-size:30px; font-weight:bold;")
+        self.word_label.setFixedHeight(52)      # 상태 전환 시 카드가 출렁이지 않게 높이 고정
         self.meaning_label = QLabel("")
         self.meaning_label.setAlignment(Qt.AlignCenter)
         self.meaning_label.setWordWrap(True)
@@ -808,7 +838,7 @@ class TypingDrillWidget(QWidget):
     def start(self, words, db):
         """단어 묶음으로 드릴 시작/재시작."""
         self.db = db
-        self.words = drill_sample(words)
+        self.words = drill_sample(words, db=db)   # 오답 많은 단어 우선
         self.idx = 0
         self.score = 0
         self.results = []
@@ -849,11 +879,11 @@ class TypingDrillWidget(QWidget):
     def _blink_tick(self):
         self._blink_on = not self._blink_on
         col = CYAN if self._blink_on else "transparent"
-        self.word_label.setStyleSheet(f"color:{col}; font-size:34px; font-weight:bold;")
+        self.word_label.setStyleSheet(f"color:{col}; font-size:30px; font-weight:bold;")
         self._blink_left -= 1
         if self._blink_left <= 0:
             self._stop_timer()
-            self.word_label.setStyleSheet(f"color:{COMMENT}; font-size:26px; font-weight:bold;")
+            self.word_label.setStyleSheet(f"color:{COMMENT}; font-size:22px; font-weight:bold;")
             self.word_label.setText("✏  타이핑하세요")
             self.input.setVisible(True)
             self.input.setEnabled(True)
@@ -1046,7 +1076,7 @@ class SentenceDrillWidget(QWidget):
     def start(self, words, db):
         self.db = db
         self.items = [(w, self._blank(w.word, w.example))
-                      for w in drill_sample(words)]
+                      for w in drill_sample(words, db=db)]
         self.idx = 0
         self.results = []
         self.card.setVisible(True)
@@ -1480,7 +1510,7 @@ class MainWindow(QMainWindow):
             self._shortcuts.append(sc)
         save_sc = QShortcut(QKeySequence("Ctrl+S"), self)
         save_sc.setContext(Qt.ApplicationShortcut)
-        save_sc.activated.connect(self._save_editor)
+        save_sc.activated.connect(lambda: self._save_editor(force=True))   # 명시적 저장은 항상 기록
         self._shortcuts.append(save_sc)
         side_sc = QShortcut(QKeySequence("Ctrl+B"), self)   # 사이드바 접기/펴기
         side_sc.setContext(Qt.ApplicationShortcut)
@@ -1593,6 +1623,9 @@ class MainWindow(QMainWindow):
         m_sent = self._tray_menu.addMenu("문장 완성")
         for lv in vocab.LEVELS:
             m_sent.addAction(lv, lambda _=False, l=lv: self._tray_vocab_drill(l, "sentence"))
+        m_rev = self._tray_menu.addMenu("🔁 오답 복습")
+        for lv in vocab.LEVELS:
+            m_rev.addAction(lv, lambda _=False, l=lv: self._tray_vocab_drill(l, "review"))
         self._tray_menu.addSeparator()
         self._tray_menu.addAction("종료", self._quit_app)
         self.tray.setContextMenu(self._tray_menu)
@@ -1604,7 +1637,18 @@ class MainWindow(QMainWindow):
         words = vocab.BY_LEVEL.get(level, [])
         if not words:
             return
-        if mode == "sentence":
+        if mode == "review":
+            # 오답 복습 — 이 레벨에서 틀린 적 있는(못 외운) 단어만
+            wrong = self.vocab_db.wrong_set()
+            words = [w for w in words if w.word in wrong]
+            if not words:
+                if self.tray:
+                    self.tray.showMessage("code T", f"{level} 레벨에 복습할 오답 단어가 없어요!",
+                                          QSystemTrayIcon.Information, 3000)
+                return
+            DrillDialog(self, TypingDrillWidget(), words, self.vocab_db,
+                        f"오답 복습 · {level} ({len(words)}개)").exec()
+        elif mode == "sentence":
             DrillDialog(self, SentenceDrillWidget(), words, self.vocab_db,
                         f"문장 완성 · {level}").exec()
         else:
@@ -1804,8 +1848,11 @@ class MainWindow(QMainWindow):
         return set()
 
     def _save_progress(self):
-        SOLUTIONS_DIR.mkdir(exist_ok=True)
-        PROGRESS_FILE.write_text(json.dumps(sorted(self.solved), ensure_ascii=False), encoding="utf-8")
+        try:
+            SOLUTIONS_DIR.mkdir(exist_ok=True)
+            PROGRESS_FILE.write_text(json.dumps(sorted(self.solved), ensure_ascii=False), encoding="utf-8")
+        except OSError as e:
+            self._set_status(f"진행 저장 실패: {e}", RED)
 
     # ---- 타이틀바 ----
     def _build_titlebar(self):
@@ -1915,12 +1962,38 @@ class MainWindow(QMainWindow):
             menu_btn.setIcon(qta.icon("fa5s.cog", color=FG))
         lay.addWidget(menu_btn)
 
+        # 힌트 (우클릭 메뉴와 동일 — 눈에 보이는 진입점)
+        self.hint_btn = mkbtn("💡 힌트", self._open_hint_menu, obj="Ghost", w=80,
+                              tip="힌트 1~3단계 · 정답 코드 보기 (문제 설명 우클릭과 동일)")
+        lay.addWidget(self.hint_btn)
+
         # 실행(출력 확인) / 제출(채점)
         self.run_btn = mkbtn("▶ Run", self.on_run, obj="Ghost", w=80, tip="실행만 — 내 입력으로 출력 확인 (F5)")
         lay.addWidget(self.run_btn)
-        self.submit_btn = mkbtn("제출", self.on_submit, obj="Run", w=74, tip="채점 — 정답 판정 (Ctrl+Enter)")
+        self.submit_btn = mkbtn("✔ 제출", self.on_submit, obj="Run", w=80, tip="채점 — 정답 판정 (Ctrl+Enter)")
         lay.addWidget(self.submit_btn)
         return bar
+
+    def _open_hint_menu(self):
+        """헤더 '힌트' 버튼 — 힌트 단계 선택 메뉴를 버튼 아래에 펼친다."""
+        if self._mode != "problem" or not self.current:
+            self._set_status("문제를 선택하면 힌트를 볼 수 있어요", ORANGE)
+            return
+        m = QMenu(self)
+        a1 = m.addAction("힌트 1  ·  접근 방향")
+        a2 = m.addAction("힌트 2  ·  자료구조 / 알고리즘")
+        a3 = m.addAction("힌트 3  ·  거의 정답")
+        m.addSeparator()
+        al = m.addAction("힌트 last  ·  정답 코드 + 풀이")
+        act = m.exec(self.hint_btn.mapToGlobal(self.hint_btn.rect().bottomLeft()))
+        if act == a1:
+            self._reveal_hint(1)
+        elif act == a2:
+            self._reveal_hint(2)
+        elif act == a3:
+            self._reveal_hint(3)
+        elif act == al:
+            self._reveal_hint(4)
 
     def _toggle_sidebar(self):
         """사이드바(탐색기)를 접거나 편다 — 접으면 나머지 카드가 그 공간을 채운다."""
@@ -2107,6 +2180,8 @@ class MainWindow(QMainWindow):
         self.tree.itemClicked.connect(self._on_tree_clicked)       # 한 번 클릭으로 토글
         self.tree.itemExpanded.connect(self._set_group_arrow)
         self.tree.itemCollapsed.connect(self._set_group_arrow)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)       # 문제 우클릭 메뉴
+        self.tree.customContextMenuRequested.connect(self._tree_menu)
         sl.addWidget(self.tree, 1)
 
         # 사이드바 하단 고정 버튼 — 사용법 / 설정
@@ -2134,7 +2209,7 @@ class MainWindow(QMainWindow):
         self.probp = probp
         probp.setObjectName("PanelBG")
         pl = QVBoxLayout(probp)
-        pl.setContentsMargins(10, 10, 8, 10)
+        pl.setContentsMargins(10, 10, 10, 10)
         pt = QLabel("문제")
         pt.setObjectName("PanelTitle")
         pl.addWidget(pt)
@@ -2488,6 +2563,7 @@ class MainWindow(QMainWindow):
         self._show_code_panel(True)
         if self._hidden_mode:
             self._apply_hide_visibility()       # 문제 모드: 설명 숨기고 코딩+터미널
+        self._update_lang_buttons_for(p)        # func 문제면 Python 외 언어 잠금
         self._render_problem(self._cur_active)
         self._load_editor()
         self._prefill_stdin(self._cur_active)
@@ -2521,6 +2597,18 @@ class MainWindow(QMainWindow):
         for code, b in self.lang_buttons.items():
             b.setChecked(code == self.lang)
 
+    def _update_lang_buttons_for(self, p):
+        """함수 구현형(func) 문제는 Python 전용 — 다른 언어 버튼을 잠가 헛수고를 막는다."""
+        is_func = getattr(p, "type", "") == "func"
+        for code, b in self.lang_buttons.items():
+            if code == "python":
+                continue
+            b.setEnabled(not is_func)
+            b.setToolTip("함수 구현형 문제는 Python 으로만 채점됩니다." if is_func else "")
+        if is_func and self.lang != "python":
+            self.lang = "python"
+            self._sync_lang_buttons()
+
     def _open_lesson(self, les):
         self._mode = "lesson"
         self.current_lesson = les
@@ -2533,6 +2621,7 @@ class MainWindow(QMainWindow):
                    "css": "css", "scss": "scss"}
         lang = les.lang if les.lang in ext_map else "python"
         self.lang = lang
+        self._update_lang_buttons_for(None)     # func 잠금 해제
         self._sync_lang_buttons()
         self.editor.set_code(les.code or "", lang if lang in ("python", "java", "cpp", "javascript") else "python")
         self.file_label.setText(f"{les.id}.{ext_map[lang]}")
@@ -2637,6 +2726,9 @@ class MainWindow(QMainWindow):
             self._append(r.stderr + "\n", RED)
         self._append(f"\n[exit {r.returncode}]  ⏱ {r.time_ms:.0f}ms\n", COMMENT)
         self._set_status("done" if r.returncode == 0 else "error", GREEN if r.returncode == 0 else RED)
+        # 실행만 한 것 — 다음 단계(채점) 안내로 초보자 혼동 방지
+        if self._mode == "problem" and r.returncode == 0:
+            self._append("  → 정답 판정을 받으려면 상단 '제출' (Ctrl+Enter)\n", CYAN)
 
     # ───────────────────────── 영단어 ─────────────────────────
 
@@ -2664,7 +2756,7 @@ class MainWindow(QMainWindow):
         self.right_stack.setVisible(False)
         if self._mode == "vocab":
             self._render_vocab(self.vocab_entry)
-            self._set_status("단어 학습 · Run → 타이핑 암기 · 우클릭 → 퀴즈", CYAN)
+            self._set_status("단어 학습 · Run → 타이핑 암기 · 우클릭 → 퀴즈/오답 복습", CYAN)
 
     def _open_vocab(self, entry):
         self._mode = "vocab"
@@ -2678,7 +2770,7 @@ class MainWindow(QMainWindow):
             self._apply_hide_visibility()       # 하이드 중이면 단어 카드는 보이게
         self._render_vocab(entry)
         self.out.clear()
-        self._set_status("단어 학습 · Run → 타이핑 암기 · 우클릭 → 퀴즈", CYAN)
+        self._set_status("단어 학습 · Run → 타이핑 암기 · 우클릭 → 퀴즈/오답 복습", CYAN)
 
     def _render_vocab(self, entry):
         words = entry["words"]
@@ -2688,9 +2780,13 @@ class MainWindow(QMainWindow):
         h = [f"<div style='font-family:Segoe UI;color:{FG};font-size:13px;line-height:1.5;'>"]
         h.append(f"<div style='color:{PURPLE};font-size:18px;font-weight:bold;'>영단어 · {html.escape(title)} "
                  f"<span style='color:{COMMENT};font-size:12px;'>({len(words)}개)</span></div>")
-        h.append(f"<div style='color:{COMMENT};font-size:11px;'>누적 — 정답 {st['correct']} · 오답 {st['wrong']} · 외운 단어 {st['known']}</div>")
+        wrong = self.vocab_db.wrong_set()
+        n_wrong = sum(1 for w in words if w.word in wrong)
+        wrong_html = (f" · <span style='color:{ORANGE};'>이 묶음 복습할 오답 {n_wrong}개</span>"
+                      if n_wrong else "")
+        h.append(f"<div style='color:{COMMENT};font-size:11px;'>누적 — 정답 {st['correct']} · 오답 {st['wrong']} · 외운 단어 {st['known']}{wrong_html}</div>")
         h.append(f"<div style='color:{GREEN};font-size:11px;margin-bottom:8px;'>"
-                 f"▶ Run → 깜빡임 암기 · 우클릭 → 깜빡임 암기 / 문장 완성 / 객관식 선택</div>")
+                 f"▶ Run → 깜빡임 암기 · 우클릭 → 깜빡임 암기 / 문장 완성 / 객관식 / 🔁 오답 복습</div>")
         DISPLAY_CAP = 120
         for w in words[:DISPLAY_CAP]:
             mark = " ✅" if w.word in known else ""
@@ -2717,7 +2813,7 @@ class MainWindow(QMainWindow):
             self._set_status("퀴즈를 보려면 단어가 더 필요합니다", ORANGE)
             return
         n = self.settings.get_int("quiz_size", 10)
-        quiz = random.sample(list(words), min(n, len(words)))
+        quiz = weighted_pick(words, min(n, len(words)), db=self.vocab_db)   # 오답 우선
         QuizDialog(self, quiz, words, self.vocab_db).exec()
         self._render_vocab(self.vocab_entry)
 
@@ -2744,6 +2840,20 @@ class MainWindow(QMainWindow):
         self.right_stack.setVisible(True)
         self.sentence_widget.start(words, self.vocab_db)
         self._set_status("문장 완성 중 — 빈칸에 단어 입력 후 Enter", CYAN)
+
+    def _vocab_review(self):
+        """오답 복습 — 이 묶음에서 틀린 적 있는(아직 못 외운) 단어만 다시 암기."""
+        words = getattr(self, "vocab_words", None) or vocab.BY_LEVEL.get(self.vocab_level, [])
+        wrong = self.vocab_db.wrong_set()
+        review = [w for w in words if w.word in wrong]
+        if not review:
+            self._set_status("복습할 오답 단어가 없어요 — 먼저 암기/퀴즈를 해보세요", ORANGE)
+            return
+        self._blur_content(True)
+        self.right_stack.setCurrentWidget(self.typing_widget)
+        self.right_stack.setVisible(True)
+        self.typing_widget.start(review, self.vocab_db)
+        self._set_status(f"오답 복습 중 — 틀린 단어 {len(review)}개만 다시!", CYAN)
 
     # ───────────────────────── 실전 모의고사 ─────────────────────────
 
@@ -2817,14 +2927,20 @@ class MainWindow(QMainWindow):
     def _tick_exam(self):
         if not self.exam:
             return
-        rem = int(self.exam["deadline"] - time.time())
-        if rem <= 0:
-            self.exam_label.setText("⏳ 00:00")
-            self._submit_exam(auto=True)
-            return
-        m, s = divmod(rem, 60)
-        n, tot = len(self.exam["solved"]), len(self.exam["problems"])
-        self.exam_label.setText(f"⏳ {m:02d}:{s:02d}  ·  {n}/{tot}")
+        try:
+            rem = int(self.exam["deadline"] - time.time())
+            if rem <= 0:
+                self.exam_label.setText("⏳ 00:00")
+                self._submit_exam(auto=True)
+                return
+            m, s = divmod(rem, 60)
+            n, tot = len(self.exam["solved"]), len(self.exam["problems"])
+            self.exam_label.setText(f"⏳ {m:02d}:{s:02d}  ·  {n}/{tot}")
+        except Exception:
+            # 1초 반복 타이머에서 예외가 반복 폭주하지 않도록 정지
+            self.exam_timer.stop()
+            import traceback
+            traceback.print_exc()
 
     def _render_exam_dashboard(self):
         ex = self.exam
@@ -2915,7 +3031,11 @@ class MainWindow(QMainWindow):
     def _load_editor(self):
         p = self.current
         path = self._sol_path(p, self.lang)
-        code = path.read_text(encoding="utf-8") if path.exists() else self._template(p, self.lang)
+        try:
+            code = (path.read_text(encoding="utf-8", errors="replace")
+                    if path.exists() else self._template(p, self.lang))
+        except OSError:
+            code = self._template(p, self.lang)
         self.editor.set_code(code, self.lang)
         self.file_label.setText(runner.LANGUAGES[self.lang]["filename"])
         if p.type == "func" and self.lang != "python":
@@ -2923,12 +3043,21 @@ class MainWindow(QMainWindow):
         else:
             self._set_status("ready", COMMENT)
 
-    def _save_editor(self):
+    def _save_editor(self, force=False):
         if not self.current:
             return
-        path = self._sol_path(self.current, self.lang)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.editor.toPlainText(), encoding="utf-8")
+        try:
+            path = self._sol_path(self.current, self.lang)
+            text = self.editor.toPlainText()
+            # 손대지 않은 템플릿 그대로면 폴더/파일을 만들지 않는다
+            # (문제를 구경만 해도 solutions/ 에 폴더가 쌓이는 문제 방지)
+            if not force and not path.exists() \
+                    and text == self._template(self.current, self.lang):
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        except OSError as e:
+            self._set_status(f"저장 실패: {e}", RED)
 
     def _prefill_stdin(self, p):
         """문제 선택 시 입력(stdin) 칸에 첫 예제 입력을 미리 채운다(표준입력형만)."""
@@ -3048,6 +3177,41 @@ class MainWindow(QMainWindow):
         sb = self.prob_view.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    def _tree_menu(self, pos):
+        """사이드바 트리 우클릭 — 문제 항목이면 힌트/정답/풀이 폴더 바로가기."""
+        it = self.tree.itemAt(pos)
+        if it is None:
+            return
+        p = self.item_problem.get(id(it))
+        if p is None:
+            return
+        m = QMenu(self.tree)
+        a_h1 = m.addAction("힌트 1  ·  접근 방향")
+        a_h2 = m.addAction("힌트 2  ·  자료구조 / 알고리즘")
+        a_h3 = m.addAction("힌트 3  ·  거의 정답")
+        a_ref = m.addAction("힌트 last  ·  정답 코드 + 풀이")
+        m.addSeparator()
+        sol_dir = SOLUTIONS_DIR / p.id
+        a_dir = m.addAction("📁 풀이 폴더 열기")
+        a_dir.setEnabled(sol_dir.exists())
+        act = m.exec(self.tree.viewport().mapToGlobal(pos))
+        if act is None:
+            return
+        self.tree.setCurrentItem(it)            # 선택 → 문제 로드 후 동작
+        if act == a_h1:
+            self._reveal_hint(1)
+        elif act == a_h2:
+            self._reveal_hint(2)
+        elif act == a_h3:
+            self._reveal_hint(3)
+        elif act == a_ref:
+            self._reveal_hint(4)
+        elif act == a_dir:
+            try:
+                os.startfile(str(sol_dir))
+            except OSError as e:
+                self._set_status(f"폴더 열기 실패: {e}", RED)
+
     def _prob_menu(self, pos, widget=None):
         widget = widget or self.prob
         if self._mode == "vocab":
@@ -3055,6 +3219,8 @@ class MainWindow(QMainWindow):
             a_type = m.addAction("깜빡임 암기 (단어 깜빡 → 입력)")
             a_sent = m.addAction("문장 완성 (빈칸 채우기)")
             a_quiz = m.addAction("객관식 퀴즈")
+            m.addSeparator()
+            a_rev = m.addAction("🔁 오답 복습 — 틀린 단어만 다시")
             act = m.exec(widget.mapToGlobal(pos))
             if act == a_type:
                 self._vocab_typing()
@@ -3062,6 +3228,8 @@ class MainWindow(QMainWindow):
                 self._vocab_sentence()
             elif act == a_quiz:
                 self._vocab_quiz()
+            elif act == a_rev:
+                self._vocab_review()
             return
         if not self.current:
             return
@@ -3111,6 +3279,8 @@ class MainWindow(QMainWindow):
     # 채점
     def on_run(self):
         """실행만 — 내가 넣은 입력으로 코드를 돌려 출력(print/console.log/cout)을 확인. 채점 아님."""
+        if not self.run_btn.isEnabled():       # 단축키(F5) 연타로 인한 중복 실행 방지
+            return
         if self._mode == "lesson":
             self._run_lesson()
             return
@@ -3126,7 +3296,7 @@ class MainWindow(QMainWindow):
             self.out.clear()
             self._append(f"{runner.LANGUAGES[lang]['name']} 실행기가 없습니다. (가이드의 설치 안내 참고)\n", ORANGE)
             return
-        self._save_editor()
+        self._save_editor(force=True)      # 실행에는 파일이 필요
         path = self._sol_path(p, lang)
         stdin_text = self.stdin_box.toPlainText()
         self.out.clear()
@@ -3136,10 +3306,9 @@ class MainWindow(QMainWindow):
         if p.type == "func":
             # 함수형: 첫 예제 인자로 호출해 반환값 확인 (입력칸 무시)
             import json
-            import tempfile
             args = p.examples[0]["args"] if p.examples else []
-            d = Path(tempfile.mkdtemp())
-            ap = d / "a.json"
+            # 임시 폴더 대신 풀이 폴더에 두어 폴더 누수 방지(keep_solutions 정리 대상)
+            ap = path.parent / "_run_args.json"
             ap.write_text(json.dumps(args), encoding="utf-8")
             self._append(f"  {p.func_name}({', '.join(map(repr, args))}) =>\n", COMMENT)
             from engine.runner import func_cmd, FUNC_HARNESS
@@ -3159,6 +3328,8 @@ class MainWindow(QMainWindow):
 
     def on_submit(self):
         """제출 — 문제의 테스트케이스로 채점해 정답/오답 판정."""
+        if not self.submit_btn.isEnabled():    # 단축키(Ctrl+Enter) 연타로 인한 중복 채점 방지
+            return
         if self._mode != "problem" or not self.current:
             self._set_status("채점할 문제를 선택하세요", ORANGE)
             return
@@ -3173,7 +3344,7 @@ class MainWindow(QMainWindow):
             self.out.clear()
             self._append(f"{runner.LANGUAGES[lang]['name']} 컴파일러가 없어 채점할 수 없습니다.\n", ORANGE)
             return
-        self._save_editor()
+        self._save_editor(force=True)      # 채점에는 파일이 필요
         path = self._sol_path(p, lang)
         self.next_btn.setVisible(False)
         eff_tl, eff_ml = effective_limits(p, lang)
@@ -3194,7 +3365,26 @@ class MainWindow(QMainWindow):
             self._append(f"\nerror: {res}\n", RED)
             self._set_status("error", RED)
             return
-        self._render_result(p, lang, res)
+        try:
+            self._render_result(p, lang, res)
+        except Exception as e:
+            # 결과 렌더링 중 예외가 앱 크래시로 이어지지 않게 격리
+            self._append(f"\n결과 표시 중 오류: {e}\n", RED)
+            self._set_status("error", RED)
+
+    @staticmethod
+    def _clip(text, max_chars=400, max_lines=8):
+        """대용량 입출력이 터미널을 도배하지 않도록 잘라서 표시."""
+        s = str(text)
+        lines = s.splitlines()
+        clipped = False
+        if len(lines) > max_lines:
+            s = "\n".join(lines[:max_lines])
+            clipped = True
+        if len(s) > max_chars:
+            s = s[:max_chars]
+            clipped = True
+        return s + (" …(생략)" if clipped else "")
 
     def _render_result(self, p, lang, res):
         eff_tl, eff_ml = effective_limits(p, lang)
@@ -3221,9 +3411,9 @@ class MainWindow(QMainWindow):
             self._append(f"    ⏱ {c.time_ms:.0f}ms · 💾 {memstr(c.peak_mem_kb)}\n", COMMENT)
             if not c.passed:
                 if c.verdict == "WA":
-                    self._append(f"     in : {c.given_input}\n", COMMENT)
-                    self._append(f"     exp: {c.expected}\n", COMMENT)
-                    self._append(f"     got: {c.actual}\n", COMMENT)
+                    self._append(f"     in : {self._clip(c.given_input)}\n", COMMENT)
+                    self._append(f"     exp: {self._clip(c.expected)}\n", COMMENT)
+                    self._append(f"     got: {self._clip(c.actual)}\n", COMMENT)
                 elif c.verdict == "RE" and c.error:
                     self._append(f"     err: {c.error}\n", COMMENT)
                 elif c.verdict == "TLE":
@@ -3260,29 +3450,78 @@ class MainWindow(QMainWindow):
 
 def _run_as_python():
     """빌드된 exe 가 파이썬 인터프리터 역할도 하도록 (무설치 Python 채점)."""
+    if len(sys.argv) >= 2 and sys.argv[1] in ("--exec-py", "--func"):
+        # 채점기(runner)가 UTF-8 로 읽으므로 출력 인코딩 고정 (cp949 깨짐 방지)
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     if len(sys.argv) >= 3 and sys.argv[1] == "--exec-py":
         import runpy
+        import traceback
         target = sys.argv[2]
         sys.argv = [target] + sys.argv[3:]
-        runpy.run_path(target, run_name="__main__")
+        try:
+            runpy.run_path(target, run_name="__main__")
+        except SystemExit:
+            raise
+        except BaseException:
+            # 사용자 코드의 예외(CE/RE 등)는 stderr 로만 내보내고 조용히 종료한다.
+            # 예외를 그대로 전파하면 PyInstaller 부트로더가 크래시 다이얼로그를 띄운다.
+            traceback.print_exc()
+            sys.exit(1)
         return True
     if len(sys.argv) >= 5 and sys.argv[1] == "--func":
         import importlib.util
         import json as _json
+        import traceback
         sol, argsp, fn = sys.argv[2], sys.argv[3], sys.argv[4]
-        with open(argsp, encoding="utf-8") as f:
-            a = _json.load(f)
-        spec = importlib.util.spec_from_file_location("usol", sol)
-        m = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(m)
-        sys.stdout.write(repr(getattr(m, fn)(*a)))
+        try:
+            with open(argsp, encoding="utf-8") as f:
+                a = _json.load(f)
+            spec = importlib.util.spec_from_file_location("usol", sol)
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+            sys.stdout.write(repr(getattr(m, fn)(*a)))
+        except SystemExit:
+            raise
+        except BaseException:
+            traceback.print_exc()
+            sys.exit(1)
         return True
     return False
+
+
+def _install_excepthook():
+    """GUI(슬롯·타이머 등)의 미처리 예외가 앱 크래시/부트로더 다이얼로그로
+    이어지지 않도록 전역 훅을 설치한다. 예외는 stderr 와 로그 파일에만 남긴다."""
+    import traceback
+
+    def hook(etype, value, tb):
+        if issubclass(etype, KeyboardInterrupt):
+            sys.__excepthook__(etype, value, tb)
+            return
+        text = "".join(traceback.format_exception(etype, value, tb))
+        try:
+            sys.stderr.write(text)
+        except Exception:
+            pass
+        try:
+            SOLUTIONS_DIR.mkdir(exist_ok=True)
+            with open(SOLUTIONS_DIR / "error.log", "a", encoding="utf-8") as f:
+                f.write(text + "\n")
+        except Exception:
+            pass
+
+    sys.excepthook = hook
 
 
 def main():
     if _run_as_python():
         return
+    _install_excepthook()
     # Windows 작업표시줄이 창 아이콘을 쓰도록 고유 AppID 지정(아이콘 그룹화)
     if sys.platform == "win32":
         try:

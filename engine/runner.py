@@ -72,25 +72,53 @@ class RunResult:
     timed_out: bool
 
 
+def _kill_tree(proc):
+    """프로세스(와 자식들)를 강제 종료한다. Windows 는 taskkill /T 로 트리 전체."""
+    try:
+        if IS_WINDOWS:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True, creationflags=_NO_WINDOW, timeout=10,
+            )
+        proc.kill()
+    except Exception:
+        pass
+
+
 def run_process(cmd, stdin_text: str, timeout_s: float, cwd=None) -> RunResult:
     """명령을 실행하고 시간·메모리를 측정한다."""
+    # 자식 파이썬 프로세스의 표준입출력을 UTF-8 로 고정 (한국어 Windows cp949 문제 방지)
+    env = dict(os.environ)
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUTF8", "1")
+
     t0 = time.perf_counter()
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        cwd=cwd,
-        creationflags=_NO_WINDOW,
-    )
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+            env=env,
+            creationflags=_NO_WINDOW,
+        )
+    except OSError as e:
+        # 실행 파일이 사라졌거나(백신 격리 등) 실행 불가 → RE 로 처리
+        return RunResult("", f"실행 실패: {e}", -1, 0.0, None, False)
     timed_out = False
     try:
         out, err = proc.communicate(input=stdin_text, timeout=timeout_s)
     except subprocess.TimeoutExpired:
         timed_out = True
-        proc.kill()
-        out, err = proc.communicate()
+        _kill_tree(proc)
+        try:
+            out, err = proc.communicate(timeout=5)
+        except Exception:
+            out, err = "", ""
     t1 = time.perf_counter()
 
     peak = None
@@ -252,16 +280,22 @@ def compile_solution(lang: str, source_path: Path) -> CompileResult:
         workdir = source_path.parent
         # 자바는 public class Main 필요 → 파일명도 Main.java 여야 함
         main_java = workdir / "Main.java"
-        if source_path.name != "Main.java":
-            shutil.copyfile(source_path, main_java)
-        proc = subprocess.run(
-            [javac, "-encoding", "UTF-8", str(main_java)],
-            capture_output=True, text=True, cwd=workdir,
-            creationflags=_NO_WINDOW,
-        )
+        try:
+            if source_path.name != "Main.java":
+                shutil.copyfile(source_path, main_java)
+            proc = subprocess.run(
+                [javac, "-encoding", "UTF-8", str(main_java)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                cwd=workdir, timeout=60, creationflags=_NO_WINDOW,
+            )
+        except subprocess.TimeoutExpired:
+            return CompileResult(False, None, "컴파일 시간 초과(60초)", workdir)
+        except OSError as e:
+            return CompileResult(False, None, f"컴파일 실패: {e}", workdir)
         if proc.returncode != 0:
             return CompileResult(False, None, proc.stderr.strip(), workdir)
-        return CompileResult(True, [java, "-cp", str(workdir), "Main"], "", workdir)
+        return CompileResult(True, [java, "-Dfile.encoding=UTF-8", "-cp", str(workdir), "Main"],
+                             "", workdir)
 
     if lang == "cpp":
         comp = _cpp_compiler()
@@ -271,11 +305,16 @@ def compile_solution(lang: str, source_path: Path) -> CompileResult:
         workdir = source_path.parent
         exe = workdir / ("prog.exe" if IS_WINDOWS else "prog")
         # -static: 번들 MinGW 의 DLL 없이도 실행되도록 정적 링크(무설치 배포 대비)
-        proc = subprocess.run(
-            [comp, "-O2", "-std=c++17", "-static", "-o", str(exe), str(source_path)],
-            capture_output=True, text=True, cwd=workdir,
-            creationflags=_NO_WINDOW,
-        )
+        try:
+            proc = subprocess.run(
+                [comp, "-O2", "-std=c++17", "-static", "-o", str(exe), str(source_path)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                cwd=workdir, timeout=120, creationflags=_NO_WINDOW,
+            )
+        except subprocess.TimeoutExpired:
+            return CompileResult(False, None, "컴파일 시간 초과(120초)", workdir)
+        except OSError as e:
+            return CompileResult(False, None, f"컴파일 실패: {e}", workdir)
         if proc.returncode != 0:
             return CompileResult(False, None, proc.stderr.strip(), workdir)
         return CompileResult(True, [str(exe)], "", workdir)

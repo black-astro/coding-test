@@ -7,11 +7,16 @@ ALL      : 랭크명 -> Problem 리스트 (id 기준 정렬)
 BY_ID    : 문제 id -> Problem
 """
 
+import sys
 import importlib
 import pkgutil
 from pathlib import Path
 
 from problems import bronze, silver, gold, platinum
+
+
+def _warn(msg):
+    print(f"[problems] 경고: {msg}", file=sys.stderr)
 
 RANKS = ["Bronze", "Silver", "Gold", "Platinum"]
 
@@ -49,9 +54,13 @@ _batch_dir = Path(__file__).parent / "batches"
 for _name in _submodules(_batch_dir, _BATCH_MODULES):
     try:
         _m = importlib.import_module(f"problems.batches.{_name}")
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as _e:
+        # 배치 내부의 import 오류도 여기로 오므로, 조용히 사라지지 않게 경고
+        _warn(f"배치 '{_name}' 를 건너뜁니다 — {_e}")
         continue
     for _p in getattr(_m, "PROBLEMS", []):
+        if _p.rank not in ALL:
+            _warn(f"[{_p.id}] rank '{_p.rank}' 는 RANKS 에 없어 메뉴에 표시되지 않습니다.")
         ALL.setdefault(_p.rank, []).append(_p)
 
 # 랭크별 기본 시간/메모리 제한 (문제에 값이 없으면 채움)
@@ -104,6 +113,17 @@ for _r in RANKS:
 # 보정: 중복 제거 + 티어 재조정(랭크 재배치 포함)
 from engine.problem_fixups import apply_to_rank_buckets as _fixup
 _fixup(ALL)
+
+# 중복 id 제거(먼저 실린 문제 유지) + 경고 — 같은 id 가 두 모듈에 있으면 목록/BY_ID 불일치가 생긴다
+for _r in RANKS:
+    _seen, _uniq = set(), []
+    for _p in ALL[_r]:
+        if _p.id in _seen:
+            _warn(f"중복 id '{_p.id}' ({_r}) — 나중 정의를 무시합니다.")
+            continue
+        _seen.add(_p.id)
+        _uniq.append(_p)
+    ALL[_r] = _uniq
 
 # id 기준 정렬
 for _r in RANKS:

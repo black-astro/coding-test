@@ -8,7 +8,7 @@ DEFAULTS = {
     "keep_solutions": "1",     # 풀이 파일(solutions/) 보관 (끄면 채점 후 정리)
     "show_stdin": "1",         # 터미널에 입력(stdin) 칸 표시
     "quiz_size": "10",         # 영단어 퀴즈 문항 수
-    "reset_on_start": "1",     # 시작 시 작성 코드·터미널 초기화
+    "reset_on_start": "0",     # 시작 시 작성 코드·터미널 초기화 (기본 OFF — 작성 코드 보존)
     "autofill_stdin": "1",     # Run 시 입력칸 비면 예제 입력 자동 사용
     "editor_font_size": "11",  # 에디터/터미널 글자 크기(pt)
     "close_action": "quit",    # X 버튼 기본 동작: quit(종료·컨펌) / tray / ask
@@ -20,9 +20,25 @@ class SettingsDB:
     def __init__(self, db_path: Path):
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(db_path))
-        self.conn.execute("CREATE TABLE IF NOT EXISTS setting (k TEXT PRIMARY KEY, v TEXT)")
-        self.conn.commit()
+        try:
+            self.conn = sqlite3.connect(str(db_path))
+            self.conn.execute("CREATE TABLE IF NOT EXISTS setting (k TEXT PRIMARY KEY, v TEXT)")
+            self.conn.commit()
+        except sqlite3.DatabaseError:
+            # DB 파일 손상 → 백업해 두고 새로 만든다 (앱 시작 크래시 방지)
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            backup = db_path.with_suffix(db_path.suffix + ".corrupt")
+            try:
+                backup.unlink(missing_ok=True)
+                db_path.rename(backup)
+            except OSError:
+                pass
+            self.conn = sqlite3.connect(str(db_path))
+            self.conn.execute("CREATE TABLE IF NOT EXISTS setting (k TEXT PRIMARY KEY, v TEXT)")
+            self.conn.commit()
 
     def get(self, key, default=None):
         cur = self.conn.execute("SELECT v FROM setting WHERE k=?", (key,))

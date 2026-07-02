@@ -13,6 +13,12 @@ import importlib.util
 
 
 def main():
+    # 채점기(runner)가 UTF-8 로 읽으므로 출력 인코딩을 고정 (한국어 Windows cp949 문제 방지)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     sol_path, args_path, func_name = sys.argv[1], sys.argv[2], sys.argv[3]
     with open(args_path, "r", encoding="utf-8") as f:
         args = json.load(f)
