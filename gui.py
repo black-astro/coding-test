@@ -1701,6 +1701,10 @@ class MainWindow(QMainWindow):
             self.tree.setCurrentItem(items[0])      # → on_tree_select 로 로드
 
     def _toggle_hide_mode(self):
+        # 레슨 모드는 하이드 콤보(문제 전용)와 호환되지 않음 — 진입 차단
+        if not self._hidden_mode and self._mode == "lesson":
+            self._set_status("하이드 모드는 문제/영단어에서만 사용할 수 있어요", ORANGE)
+            return
         self._set_hide_mode(not self._hidden_mode)
 
     def _apply_hide_visibility(self):
@@ -1815,9 +1819,10 @@ class MainWindow(QMainWindow):
             self._apply_native_titlebar()
 
     def _apply_native_titlebar(self):
-        """Windows 네이티브 타이틀바를 다크로(+Win11이면 CAPTION_COLOR 색으로)."""
-        if sys.platform != "win32" or not self.settings.get_bool("dark_titlebar"):
+        """Windows 네이티브 타이틀바를 설정에 따라 다크/기본으로 (설정 변경 시 즉시 반영)."""
+        if sys.platform != "win32":
             return
+        dark = self.settings.get_bool("dark_titlebar")
         try:
             import ctypes
             hwnd = int(self.winId())
@@ -1827,14 +1832,20 @@ class MainWindow(QMainWindow):
                 hexc = hexc.lstrip("#")
                 r, g, b = int(hexc[0:2], 16), int(hexc[2:4], 16), int(hexc[4:6], 16)
                 return ctypes.c_int((b << 16) | (g << 8) | r)
-            one = ctypes.c_int(1)
-            if dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(one), 4) != 0:
-                dwm.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(one), 4)
-            # Win11 22000+ : 캡션/텍스트/테두리 색을 VSCode 테마에 맞춤 (그 외 버전은 무시)
-            cap, txt, bdr = cref(CAPTION_COLOR), cref(FG), cref(BG3)
-            dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(cap), 4)  # caption
-            dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(txt), 4)  # text
-            dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(bdr), 4)  # border
+            flag = ctypes.c_int(1 if dark else 0)
+            if dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(flag), 4) != 0:
+                dwm.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(flag), 4)
+            if dark:
+                # Win11 22000+ : 캡션/텍스트/테두리 색을 VSCode 테마에 맞춤 (그 외 버전은 무시)
+                cap, txt, bdr = cref(CAPTION_COLOR), cref(FG), cref(BG3)
+                dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(cap), 4)  # caption
+                dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(txt), 4)  # text
+                dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(bdr), 4)  # border
+            else:
+                # OFF → 시스템 기본색 복원 (DWMWA_COLOR_DEFAULT)
+                default = ctypes.c_uint(0xFFFFFFFF)
+                for attr in (35, 36, 34):
+                    dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(default), 4)
         except Exception:
             pass
 
@@ -2013,6 +2024,7 @@ class MainWindow(QMainWindow):
 
     def _apply_settings(self):
         self.stdin_box.setVisible(self.settings.get_bool("show_stdin"))
+        self._apply_native_titlebar()          # 다크 타이틀바 즉시 반영 (ON/OFF 모두)
         # 에디터/터미널 글자 크기
         size = self.settings.get_int("editor_font_size", 11)
         for w in (self.editor, self.out, self.stdin_box):
@@ -2598,10 +2610,13 @@ class MainWindow(QMainWindow):
             b.setChecked(code == self.lang)
 
     def _update_lang_buttons_for(self, p):
-        """함수 구현형(func) 문제는 Python 전용 — 다른 언어 버튼을 잠가 헛수고를 막는다."""
+        """함수 구현형(func) 문제는 Python 전용 — 다른 언어 버튼을 잠가 헛수고를 막는다.
+        (레슨의 전체 잠금 등 이전 모드 상태도 여기서 복구)"""
         is_func = getattr(p, "type", "") == "func"
         for code, b in self.lang_buttons.items():
             if code == "python":
+                b.setEnabled(True)          # 이전 모드(레슨 등)에서 잠긴 상태 복구
+                b.setToolTip("")
                 continue
             b.setEnabled(not is_func)
             b.setToolTip("함수 구현형 문제는 Python 으로만 채점됩니다." if is_func else "")
@@ -2621,8 +2636,12 @@ class MainWindow(QMainWindow):
                    "css": "css", "scss": "scss"}
         lang = les.lang if les.lang in ext_map else "python"
         self.lang = lang
-        self._update_lang_buttons_for(None)     # func 잠금 해제
         self._sync_lang_buttons()
+        # 레슨은 예시 코드의 언어로만 실행 — 언어 전환 잠금 (코드/언어 불일치 방지)
+        for _b in self.lang_buttons.values():
+            _b.setEnabled(False)
+            _b.setToolTip("레슨은 예시 코드의 언어로 실행됩니다")
+        self.stdin_box.clear()                  # 이전 문제의 입력 잔존 제거
         self.editor.set_code(les.code or "", lang if lang in ("python", "java", "cpp", "javascript") else "python")
         self.file_label.setText(f"{les.id}.{ext_map[lang]}")
         if les.lang == "guide" or not les.code:
@@ -2705,7 +2724,11 @@ class MainWindow(QMainWindow):
         self._append(f"$ run {runner.LANGUAGES[lang]['name']}\n", CYAN)
         self._set_status("running…", YELLOW)
         self.run_btn.setEnabled(False)
-        th = RunThread(lang, path)
+        # 입력칸(stdin) 내용을 레슨 실행에도 전달 — input()/Scanner 예시 코드 대응
+        stdin_text = self.stdin_box.toPlainText()
+        if stdin_text.strip():
+            self._append(f"  stdin> {stdin_text.strip()}\n", COMMENT)
+        th = RunThread(lang, path, stdin=stdin_text)
         th.done.connect(self._on_lesson_done)
         th.finished.connect(lambda t=th: self._threads.remove(t) if t in self._threads else None)
         self._threads.append(th)
@@ -2765,6 +2788,8 @@ class MainWindow(QMainWindow):
         self.vocab_words = entry["words"]
         self.current = None
         self.current_lesson = None
+        self._update_lang_buttons_for(None)     # 이전 모드의 언어 버튼 잠금 해제
+        self.stdin_box.clear()                  # 이전 문제의 입력 잔존 제거
         self._show_code_panel(False)            # 에디터·터미널 숨김
         if self._hidden_mode:
             self._apply_hide_visibility()       # 하이드 중이면 단어 카드는 보이게
@@ -2905,6 +2930,7 @@ class MainWindow(QMainWindow):
         self._tick_exam()
         self._mode = "problem"
         self.current = None
+        self._update_lang_buttons_for(None)     # 이전 모드의 언어 버튼 잠금 해제
         self._show_code_panel(True)
         self._render_exam_dashboard()
         self._set_status("시험 시작! 사이드바 '▶ 시험 진행중'에서 문제를 푸세요", CYAN)
@@ -3313,6 +3339,10 @@ class MainWindow(QMainWindow):
             self._run_lesson()
             return
         if self._mode == "vocab":
+            # 드릴(암기/문장) 진행 중이면 F5 재입력으로 처음부터 재시작되지 않게
+            if (self.right_stack.isVisible()
+                    and self.right_stack.currentWidget() in (self.typing_widget, self.sentence_widget)):
+                return
             self._vocab_typing()
             return
         if not self.current:
