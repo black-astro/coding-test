@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
                                QTabWidget)
 
-APP_VERSION = "1.1.9"
+APP_VERSION = "1.1.10"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -3060,11 +3060,39 @@ class MainWindow(QMainWindow):
             self._set_status(f"저장 실패: {e}", RED)
 
     def _prefill_stdin(self, p):
-        """문제 선택 시 입력(stdin) 칸에 첫 예제 입력을 미리 채운다(표준입력형만)."""
-        if getattr(p, "type", "") == "stdin" and p.examples:
+        """문제 선택 시 입력(stdin) 칸에 첫 예제를 미리 채운다.
+        표준입력형=예제 입력, 함수형=예제 호출식(수정해서 Run 가능)."""
+        ptype = getattr(p, "type", "")
+        if ptype == "stdin" and p.examples:
             self.stdin_box.setPlainText(str(p.examples[0].get("input", "")).rstrip())
+        elif ptype == "func" and p.examples:
+            args = p.examples[0].get("args", [])
+            self.stdin_box.setPlainText(f"{p.func_name}({', '.join(map(repr, args))})")
         else:
             self.stdin_box.clear()
+
+    @staticmethod
+    def _parse_func_args(p, text):
+        """입력칸 텍스트 → 함수 인자 리스트.
+        비어 있으면 None(예제 인자 사용), 해석 불가면 "ERROR".
+        허용 형식: 6 · 1, 2 · [1, 2], "abc" · solution(6) 같은 호출식."""
+        import ast
+        import json
+        s = (text or "").strip()
+        if not s:
+            return None
+        m = re.match(r"^\w+\s*\((.*)\)\s*$", s, re.S)   # solution(...) 껍데기 벗기기
+        if m:
+            s = m.group(1).strip()
+            if not s:
+                return []
+        try:
+            val = ast.literal_eval(f"({s},)")
+            args = [list(a) if isinstance(a, tuple) else a for a in val]
+            json.dumps(args)                             # 하니스 전달 가능 여부 확인
+            return args
+        except Exception:
+            return "ERROR"
 
     def _set_status(self, text, color):
         self.status.setText(text)
@@ -3304,9 +3332,21 @@ class MainWindow(QMainWindow):
         self._set_status("running…", YELLOW)
         self.run_btn.setEnabled(False)
         if p.type == "func":
-            # 함수형: 첫 예제 인자로 호출해 반환값 확인 (입력칸 무시)
+            # 함수형: 입력칸에 쓴 인자로 호출 — 비어 있으면 첫 예제 인자 사용
             import json
-            args = p.examples[0]["args"] if p.examples else []
+            custom = self._parse_func_args(p, stdin_text)
+            if custom == "ERROR":
+                self._append(f"  입력칸의 인자를 해석할 수 없습니다: {stdin_text.strip()}\n", RED)
+                self._append(f"  예: 6   또는   {p.func_name}(6)   (여러 개면 쉼표로: 1, [2, 3])\n", COMMENT)
+                self.run_btn.setEnabled(True)
+                self._set_status("인자 형식 오류", ORANGE)
+                return
+            if custom is not None:
+                args = custom
+            else:
+                args = p.examples[0]["args"] if p.examples else []
+                if p.examples:
+                    self._append("  (입력칸이 비어 있어 첫 예제 인자를 사용합니다)\n", COMMENT)
             # 임시 폴더 대신 풀이 폴더에 두어 폴더 누수 방지(keep_solutions 정리 대상)
             ap = path.parent / "_run_args.json"
             ap.write_text(json.dumps(args), encoding="utf-8")
