@@ -13,6 +13,10 @@ DEFAULTS = {
     "editor_font_size": "11",  # 에디터/터미널 글자 크기(pt)
     "close_action": "quit",    # X 버튼 기본 동작: quit(종료·컨펌) / tray / ask
     "rank_unlock": "0",        # 랭크 잠금 해제 — 켜면 모든 랭크 문제 풀 수 있음
+    "wrap_editor": "0",        # 에디터 줄바꿈 (긴 줄을 창 폭에 맞춰 접기)
+    "auto_next": "0",          # 정답 시 자동으로 다음 문제 열기
+    "resume_last": "1",        # 시작 시 마지막에 보던 문제 이어서 열기
+    "exam_to_progress": "1",   # 모의고사 정답을 영구 풀이 기록에도 반영
 }
 
 

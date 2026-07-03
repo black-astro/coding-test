@@ -31,9 +31,9 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStackedWidget, QScrollArea, QSystemTrayIcon, QSlider,
                                QStyle, QStyleOptionSlider, QLineEdit,
                                QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
-                               QTabWidget)
+                               QTabWidget, QListWidget, QListWidgetItem)
 
-APP_VERSION = "1.1.11"
+APP_VERSION = "1.1.12"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -1219,26 +1219,86 @@ class DrillDialog(QDialog):
 
 # ───────────────────────── 설정 다이얼로그 ─────────────────────────
 
+class ToggleSwitch(QCheckBox):
+    """iOS 풍 토글 스위치 — QCheckBox 를 상속해 상태 저장 로직은 그대로 쓴다."""
+
+    W, H = 40, 20
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(self.W, self.H + 4)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        y = (self.height() - self.H) // 2
+        on = self.isChecked()
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(PURPLE if on else CUR))
+        p.drawRoundedRect(0, y, self.W, self.H, self.H // 2, self.H // 2)
+        p.setBrush(QColor("#f8f8f2"))
+        x = self.W - self.H + 2 if on else 2
+        p.drawEllipse(x, y + 2, self.H - 4, self.H - 4)
+        p.end()
+
+
 class SettingsDialog(QDialog):
+    """설정 — 왼쪽 카테고리 내비 + 오른쪽 카드형 옵션 (VSCode 설정 스타일)."""
+
     def __init__(self, parent, settings):
         super().__init__(parent)
         self.setWindowTitle("설정")
-        self.resize(640, 540)
+        self.resize(760, 560)
         self.s = settings
         self.win = parent
-        self._checks = {}      # key -> QCheckBox
+        self._checks = {}      # key -> ToggleSwitch
+        self._combos = {}      # key -> (QComboBox, use_data)
+
+        self.setStyleSheet(
+            f"QListWidget#SetNav {{ background:{BG2}; border:none; border-radius:8px;"
+            f"                      padding:6px; font-size:13px; outline:0; }}"
+            f"QListWidget#SetNav::item {{ padding:9px 12px; border-radius:6px;"
+            f"                            color:{FG}; margin:1px 0; }}"
+            f"QListWidget#SetNav::item:selected {{ background:{CUR}; color:{CYAN}; }}"
+            f"QListWidget#SetNav::item:hover:!selected {{ background:{CARD}; }}"
+            f"QFrame#OptCard {{ background:{CARD}; border:1px solid {BORDER};"
+            f"                  border-radius:8px; }}"
+            f"QFrame#OptCard:hover {{ border:1px solid {CUR}; }}"
+            f"QLabel#OptTitle {{ font-size:13px; font-weight:bold; color:{FG};"
+            f"                   background:transparent; }}"
+            f"QLabel#OptDesc {{ font-size:11px; color:{COMMENT}; background:transparent; }}"
+            f"QLabel#SecTitle {{ font-size:12px; font-weight:bold; color:{PURPLE};"
+            f"                   margin:6px 2px 0; }}"
+            f"QFrame#SetBody {{ background:{BG2}; border:none; border-radius:8px; }}"
+        )
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(12, 12, 12, 8)
-        outer.setSpacing(8)
-        tabs = QTabWidget()
-        outer.addWidget(tabs, 1)
+        outer.setContentsMargins(12, 12, 12, 10)
+        outer.setSpacing(10)
 
-        def page():
-            host = QWidget()
-            host.setStyleSheet("background:transparent;")
-            hl = QVBoxLayout(host)
-            hl.setContentsMargins(0, 0, 0, 0)
+        body = QHBoxLayout()
+        body.setSpacing(10)
+        outer.addLayout(body, 1)
+
+        self.nav = QListWidget()
+        self.nav.setObjectName("SetNav")
+        self.nav.setFixedWidth(150)
+        body.addWidget(self.nav)
+
+        # 우측 옵션 영역 — 좌측 내비와 같은 라운드 배경
+        right = QFrame()
+        right.setObjectName("SetBody")
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(10, 10, 6, 10)
+        self.stack = QStackedWidget()
+        self.stack.setStyleSheet("background:transparent;")
+        rl.addWidget(self.stack)
+        body.addWidget(right, 1)
+        self.nav.currentRowChanged.connect(self.stack.setCurrentIndex)
+
+        # ---- 페이지/카드 헬퍼 ----
+        def page(nav_label):
             sc = QScrollArea()
             sc.setWidgetResizable(True)
             sc.setFrameShape(QFrame.NoFrame)
@@ -1247,115 +1307,146 @@ class SettingsDialog(QDialog):
             inner = QWidget()
             inner.setStyleSheet("background:transparent;")
             l = QVBoxLayout(inner)
-            l.setContentsMargins(18, 16, 18, 16)
+            l.setContentsMargins(2, 2, 8, 2)
             l.setSpacing(7)
             sc.setWidget(inner)
-            hl.addWidget(sc)
-            return host, l
+            self.stack.addWidget(sc)
+            QListWidgetItem(nav_label, self.nav)
+            return l
 
-        def desc(l, t):
-            x = QLabel(t)
-            x.setWordWrap(True)
-            x.setStyleSheet(f"color:{COMMENT};font-size:11px;")
-            x.setContentsMargins(2, 0, 0, 6)
-            l.addWidget(x)
+        def card(l, title, description, control):
+            fr = QFrame()
+            fr.setObjectName("OptCard")
+            row = QHBoxLayout(fr)
+            row.setContentsMargins(14, 10, 14, 10)
+            row.setSpacing(12)
+            tv = QVBoxLayout()
+            tv.setSpacing(2)
+            t = QLabel(title)
+            t.setObjectName("OptTitle")
+            d = QLabel(description)
+            d.setObjectName("OptDesc")
+            d.setWordWrap(True)
+            tv.addWidget(t)
+            tv.addWidget(d)
+            row.addLayout(tv, 1)
+            row.addWidget(control, 0, Qt.AlignVCenter)
+            l.addWidget(fr)
+            return fr
 
-        def check(l, key, label):
-            cb = QCheckBox(label)
-            cb.setChecked(settings.get_bool(key))
-            self._checks[key] = cb
-            l.addWidget(cb)
-            return cb
+        def toggle(l, key, title, description):
+            sw = ToggleSwitch()
+            sw.setChecked(settings.get_bool(key))
+            self._checks[key] = sw
+            card(l, title, description, sw)
 
-        def combo(l, label, key, items, default):
-            r = QHBoxLayout()
-            r.addWidget(QLabel(label))
+        def combo(l, key, title, description, items, default, data_items=None):
             c = QComboBox()
-            c.addItems(items)
-            c.setCurrentText(settings.get(key, default))
-            r.addWidget(c)
-            r.addStretch(1)
-            l.addLayout(r)
-            return c
+            c.setFixedWidth(150)
+            if data_items:
+                for lab, data in data_items:
+                    c.addItem(lab, data)
+                ci = c.findData(settings.get(key, default) or default)
+                c.setCurrentIndex(ci if ci >= 0 else 0)
+            else:
+                c.addItems(items)
+                c.setCurrentText(settings.get(key, default))
+            self._combos[key] = (c, data_items is not None)
+            card(l, title, description, c)
 
-        # 탭: 화면 / 표시
-        p1, l1 = page()
-        check(l1, "dark_titlebar", "Windows 다크 타이틀바")
-        desc(l1, "창 상단 제목 표시줄을 어두운 색으로 표시합니다 (Windows 10/11).")
-        check(l1, "show_stdin", "터미널에 입력(stdin) 칸 표시")
-        desc(l1, "Run 실행 시 직접 입력값을 넣는 칸. 끄면 숨겨집니다.")
-        self.combo_font = combo(l1, "에디터 글자 크기 (pt)", "editor_font_size",
-                                ["8", "9", "10", "11", "12", "13", "14", "16", "18"], "11")
-        desc(l1, "코드 에디터와 터미널의 글자 크기.")
+        def section(l, text):
+            t = QLabel(text)
+            t.setObjectName("SecTitle")
+            l.addWidget(t)
+
+        # ---- 화면 / 표시 ----
+        l1 = page("화면 · 표시")
+        toggle(l1, "dark_titlebar", "Windows 다크 타이틀바",
+               "창 상단 제목 표시줄을 어두운 색으로 표시합니다. 저장 즉시 반영됩니다.")
+        toggle(l1, "show_stdin", "입력(stdin) 칸 표시",
+               "터미널 옆에 Run 용 입력값을 넣는 칸을 표시합니다.")
+        combo(l1, "editor_font_size", "에디터 글자 크기",
+              "코드 에디터·터미널·입력칸의 글자 크기(pt).",
+              ["8", "9", "10", "11", "12", "13", "14", "16", "18"], "11")
+        toggle(l1, "wrap_editor", "에디터 줄바꿈",
+               "긴 코드 줄을 가로 스크롤 대신 창 폭에 맞춰 접어서 표시합니다.")
         l1.addStretch(1)
-        tabs.addTab(p1, "화면 / 표시")
 
-        # 탭: 풀이 / 학습
-        p2, l2 = page()
-        check(l2, "reset_on_start", "시작할 때 작성한 코드·터미널 초기화")
-        desc(l2, "프로그램을 켤 때마다 에디터를 기본 템플릿으로 되돌리고 터미널을 비웁니다. "
-                 "(푼 문제 기록·랭크·영단어 진행은 유지됩니다.)")
-        check(l2, "autofill_stdin", "Run 시 입력칸이 비어 있으면 예제 입력 자동 사용")
-        desc(l2, "입력값을 직접 넣지 않아도 그 문제의 첫 예제 입력으로 바로 실행해 봅니다.")
-        check(l2, "keep_solutions", "작성한 풀이 파일 보관")
-        desc(l2, "끄면 종료 시 풀이 코드 파일을 정리해 디스크 용량을 아낍니다.")
-        check(l2, "rank_unlock", "랭크 잠금 해제 (모든 랭크 문제 풀기)")
-        desc(l2, "기본은 현재 랭크까지만 풀 수 있고 상위 랭크 문제는 잠겨 있습니다. "
-                 "이 옵션을 켜면 브론즈여도 플래티넘 문제까지 바로 풀 수 있습니다.")
+        # ---- 풀이 / 학습 ----
+        l2 = page("풀이 · 학습")
+        toggle(l2, "resume_last", "시작 시 마지막 문제 이어서 열기",
+               "프로그램을 켜면 지난번에 보던 문제를 자동으로 엽니다.")
+        toggle(l2, "auto_next", "정답 시 자동으로 다음 문제 열기",
+               "채점에 통과하면 잠시 후 같은 목록의 다음 문제로 자동 이동합니다.")
+        toggle(l2, "autofill_stdin", "Run 시 예제 입력 자동 사용",
+               "입력칸이 비어 있으면 그 문제의 첫 예제 입력으로 실행합니다.")
+        section(l2, "보관 · 초기화")
+        toggle(l2, "keep_solutions", "작성한 풀이 파일 보관",
+               "끄면 종료할 때 풀이 코드 파일을 정리해 디스크 용량을 아낍니다.")
+        toggle(l2, "reset_on_start", "시작할 때 작성 코드·터미널 초기화",
+               "켤 때마다 에디터를 기본 템플릿으로 되돌립니다. "
+               "(푼 문제 기록·랭크·영단어 진행은 유지)")
+        section(l2, "난이도")
+        toggle(l2, "rank_unlock", "랭크 잠금 해제",
+               "기본은 현재 랭크까지만 풀 수 있습니다. 켜면 브론즈여도 "
+               "플래티넘 문제까지 바로 풀 수 있습니다.")
         l2.addStretch(1)
-        tabs.addTab(p2, "풀이 / 학습")
 
-        # 탭: 영단어
-        p3, l3 = page()
-        self.combo = combo(l3, "퀴즈 문항 수", "quiz_size", ["10", "15", "20", "30"], "10")
-        desc(l3, "Run 또는 우클릭으로 푸는 단어 퀴즈의 문제 수.")
+        # ---- 시험 / 영단어 ----
+        l3 = page("시험 · 영단어")
+        toggle(l3, "exam_to_progress", "모의고사 정답을 영구 기록에 반영",
+               "끄면 시험 중 푼 문제는 시험 점수에만 반영되고, 일반 풀이 기록(✓)에는 "
+               "남지 않아 나중에 새 문제처럼 다시 풀 수 있습니다.")
+        combo(l3, "quiz_size", "영단어 퀴즈 문항 수",
+              "객관식 단어 퀴즈 한 판의 문제 수.",
+              ["10", "15", "20", "30"], "10")
         l3.addStretch(1)
-        tabs.addTab(p3, "영단어")
 
-        # 탭: 종료
-        p4, l4 = page()
-        cr = QHBoxLayout()
-        cr.addWidget(QLabel("닫기(X) 버튼 동작"))
-        self.combo_close = QComboBox()
-        for label, data in [("프로그램 종료", "quit"), ("트레이로 보내기", "tray"), ("물어보기", "ask")]:
-            self.combo_close.addItem(label, data)
-        ci = self.combo_close.findData(settings.get("close_action", "quit") or "quit")
-        self.combo_close.setCurrentIndex(ci if ci >= 0 else 0)
-        cr.addWidget(self.combo_close)
-        cr.addStretch(1)
-        l4.addLayout(cr)
-        desc(l4, "창의 X를 눌렀을 때 종료할지, 트레이로 보낼지, 매번 물어볼지 선택합니다. "
-                 "종료 시에는 한 번 더 확인합니다(‘트레이로 보내기’면 트레이 종료는 바로 실행).")
+        # ---- 동작 ----
+        l4 = page("동작")
+        combo(l4, "close_action", "닫기(X) 버튼 동작",
+              "창의 X를 눌렀을 때 종료할지, 트레이로 보낼지, 매번 물어볼지 선택합니다.",
+              None, "quit",
+              data_items=[("프로그램 종료", "quit"), ("트레이로 보내기", "tray"),
+                          ("물어보기", "ask")])
         l4.addStretch(1)
-        tabs.addTab(p4, "종료")
 
-        # 탭: 관리
-        p5, l5 = page()
-        for label, fn in [("문제 변형 리셋 (변수 문제 새 값으로)", parent._on_reset),
-                          ("내 티어 초기화 (푼 기록 삭제)", parent._reset_tier),
-                          ("환경 점검 (JDK / g++ / Node)", parent._env_check)]:
-            b = QPushButton(label)
-            b.setObjectName("ManageBtn")
+        # ---- 관리 ----
+        l5 = page("관리")
+        for label, description, fn in [
+                ("문제 변형 리셋", "변수형 문제(A+B 등)를 새 값으로 다시 출제합니다.", parent._on_reset),
+                ("내 티어 초기화", "푼 문제 기록을 모두 삭제합니다. 작성한 코드는 유지됩니다.", parent._reset_tier),
+                ("환경 점검", "JDK · g++ · Node · SCSS 설치 상태와 버전을 확인합니다.", parent._env_check)]:
+            b = QPushButton("실행")
+            b.setObjectName("Ghost")
+            b.setFixedWidth(72)
             b.clicked.connect(lambda _=False, fn=fn: (self.accept(), fn()))
-            l5.addWidget(b)
+            card(l5, label, description, b)
         l5.addStretch(1)
-        tabs.addTab(p5, "관리")
 
+        self.nav.setCurrentRow(0)
+
+        # ---- 하단 버튼 ----
+        bar = QHBoxLayout()
+        bar.setContentsMargins(2, 0, 2, 0)
+        bar.addStretch(1)
+        cancel = QPushButton("취소")
+        cancel.setObjectName("Ghost")
+        cancel.setFixedWidth(74)
+        cancel.clicked.connect(self.reject)
+        bar.addWidget(cancel)
         save = QPushButton("저장")
         save.setObjectName("Run")
+        save.setFixedWidth(74)
         save.clicked.connect(self._save)
-        bar = QHBoxLayout()
-        bar.setContentsMargins(4, 0, 4, 4)
-        bar.addStretch(1)
         bar.addWidget(save)
         outer.addLayout(bar)
 
     def _save(self):
-        for key, cb in self._checks.items():
-            self.s.set(key, "1" if cb.isChecked() else "0")
-        self.s.set("editor_font_size", self.combo_font.currentText())
-        self.s.set("quiz_size", self.combo.currentText())
-        self.s.set("close_action", self.combo_close.currentData())
+        for key, sw in self._checks.items():
+            self.s.set(key, "1" if sw.isChecked() else "0")
+        for key, (c, use_data) in self._combos.items():
+            self.s.set(key, c.currentData() if use_data else c.currentText())
         self.win._apply_settings()
         self.accept()
 
@@ -1529,6 +1620,11 @@ class MainWindow(QMainWindow):
         self._build_tray()
         self._update_profile()
         self._apply_settings()
+        # 시작 시 마지막에 보던 문제 이어서 열기
+        if self.settings.get_bool("resume_last"):
+            _pid = self.settings.get("last_problem", "")
+            if _pid:
+                QTimer.singleShot(0, lambda: self._open_problem_by_id(_pid))
         # 저장된 투명도 적용
         op = self.settings.get_int("opacity", 100)
         op = min(100, max(10, op))
@@ -2005,11 +2101,12 @@ class MainWindow(QMainWindow):
             self.hide_btn.setIcon(qta.icon("fa5s.compress", color=FG))
         lay.addWidget(self.hide_btn)
 
-        # 설정 메뉴
-        menu_btn = mkbtn("" if qta else "⚙", self._open_settings, tip="설정")
+        # 설정 메뉴 (클릭 → 빠른 메뉴: 설정/환경 점검/사용법/관리)
+        menu_btn = mkbtn("" if qta else "⚙", self._open_settings_menu, tip="설정 · 관리")
         menu_btn.setFixedWidth(40)
         if qta:
             menu_btn.setIcon(qta.icon("fa5s.cog", color=FG))
+        self.settings_btn = menu_btn
         lay.addWidget(menu_btn)
 
         # 힌트 (우클릭 메뉴와 동일 — 눈에 보이는 진입점)
@@ -2058,12 +2155,38 @@ class MainWindow(QMainWindow):
     def _open_settings(self):
         SettingsDialog(self, self.settings).exec()
 
+    def _open_settings_menu(self):
+        """⚙ 버튼 — 설정과 관리 기능으로 바로 가는 빠른 메뉴."""
+        m = QMenu(self)
+        a_set = m.addAction("설정…")
+        m.addSeparator()
+        a_env = m.addAction("환경 점검 (JDK · g++ · Node)")
+        a_help = m.addAction("사용법")
+        m.addSeparator()
+        a_reset = m.addAction("문제 변형 리셋")
+        a_tier = m.addAction("내 티어 초기화")
+        act = m.exec(self.settings_btn.mapToGlobal(self.settings_btn.rect().bottomLeft()))
+        if act == a_set:
+            self._open_settings()
+        elif act == a_env:
+            self._env_check()
+        elif act == a_help:
+            self._open_help()
+        elif act == a_reset:
+            self._on_reset()
+        elif act == a_tier:
+            self._reset_tier()
+
     def _open_help(self):
         HelpDialog(self).exec()
 
     def _apply_settings(self):
         self.stdin_box.setVisible(self.settings.get_bool("show_stdin"))
         self._apply_native_titlebar()          # 다크 타이틀바 즉시 반영 (ON/OFF 모두)
+        # 에디터 줄바꿈
+        wrap = QTextOption.WrapAtWordBoundaryOrAnywhere if self.settings.get_bool("wrap_editor") \
+            else QTextOption.NoWrap
+        self.editor.setWordWrapMode(wrap)
         # 에디터/터미널 글자 크기
         size = self.settings.get_int("editor_font_size", 11)
         for w in (self.editor, self.out, self.stdin_box):
@@ -2611,6 +2734,7 @@ class MainWindow(QMainWindow):
         self.current = p
         self._cur_active = self._apply_variant(p)
         self._reveal = 0          # 새 문제 → 힌트 숨김 상태로
+        self.settings.set("last_problem", p.id)   # 이어서 열기용 기록
         self._show_code_panel(True)
         if self._hidden_mode:
             self._apply_hide_visibility()       # 문제 모드: 설명 숨기고 코딩+터미널
@@ -2641,6 +2765,19 @@ class MainWindow(QMainWindow):
         nxt = self._next_sibling_problem()
         if nxt is not None:
             self.tree.setCurrentItem(nxt)   # → on_tree_select 로 로드
+
+    def _open_problem_by_id(self, pid):
+        """문제 id 로 트리 항목을 찾아 선택한다 (그룹 펼침 포함) — 이어서 열기용."""
+        items = self.problem_item.get(pid) or []
+        if not items:
+            return
+        it = items[0]
+        par = it.parent()
+        while par is not None:
+            par.setExpanded(True)
+            par = par.parent()
+        self.tree.setCurrentItem(it)
+        self.tree.scrollToItem(it)
 
     # ───────────────────────── 학습(레슨) ─────────────────────────
 
@@ -3578,12 +3715,14 @@ class MainWindow(QMainWindow):
             self._append(f"  ✓ all passed   {res.passed}/{res.total}\n", GREEN, bold=True)
             self._append(f"  peak  ⏱ {res.max_time_ms:.0f}ms · 💾 {memstr(res.max_mem_kb)}\n", COMMENT)
             self._set_status("passed", GREEN)
-            if p.id not in self.solved:
+            in_exam = bool(self.exam and p.id in self.exam["ids"])
+            # 시험 중 정답은 설정에 따라 영구 기록 반영 여부 선택
+            if p.id not in self.solved and (not in_exam or self.settings.get_bool("exam_to_progress")):
                 self.solved.add(p.id)
                 self._save_progress()
                 self._refresh_item(p)
                 self._update_profile()
-            if self.exam and p.id in self.exam["ids"]:
+            if in_exam:
                 self.exam["solved"].add(p.id)
                 self._tick_exam()
             info = getattr(self, "_profile_info", None)
@@ -3594,7 +3733,11 @@ class MainWindow(QMainWindow):
             # 합격 → 다음 문제 버튼 (같은 목록에 다음 문제가 있으면)
             if self._has_next_problem():
                 self.next_btn.setVisible(True)
-                self._append("  → 상단 '다음 문제' 로 이어서 풀 수 있어요.\n", CYAN)
+                if self.settings.get_bool("auto_next") and not self.exam:
+                    self._append("  → 잠시 후 다음 문제로 자동 이동합니다…\n", CYAN)
+                    QTimer.singleShot(1500, self._next_problem)
+                else:
+                    self._append("  → 상단 '다음 문제' 로 이어서 풀 수 있어요.\n", CYAN)
         else:
             self._append(f"  ✗ failed   {res.passed}/{res.total}\n", RED, bold=True)
             self._set_status(f"failed {res.passed}/{res.total}", RED)
