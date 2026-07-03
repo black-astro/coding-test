@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
                                QTabWidget)
 
-APP_VERSION = "1.1.10"
+APP_VERSION = "1.1.11"
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -1661,8 +1661,47 @@ class MainWindow(QMainWindow):
 
     def _show_normal(self):
         self.showNormal()
+        self._force_foreground()
+
+    def _force_foreground(self):
+        """창을 최상위로 올리고 포커스를 가져온다.
+
+        Windows 는 다른 앱이 포커스를 쥐고 있으면 SetForegroundWindow 를 막는다
+        (새로 실행한 창이 뒤에 깔리는 현상). 포그라운드 스레드에 입력을 잠시
+        붙였다 떼는 표준 우회로 확실히 앞으로 가져온다."""
+        self.setWindowState((self.windowState() & ~Qt.WindowMinimized) | Qt.WindowActive)
         self.raise_()
         self.activateWindow()
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hwnd = int(self.winId())
+            if user32.GetForegroundWindow() == hwnd:
+                return
+            # 1) ALT 키를 살짝 눌렀다 떼면 포그라운드 잠금이 풀린다 (고전적 우회)
+            KEYUP = 0x0002
+            VK_MENU = 0x12
+            user32.keybd_event(VK_MENU, 0, 0, 0)
+            user32.keybd_event(VK_MENU, 0, KEYUP, 0)
+            user32.SetForegroundWindow(hwnd)
+            # 2) 포그라운드 스레드에 입력을 붙였다 떼는 우회
+            if user32.GetForegroundWindow() != hwnd:
+                fg = user32.GetForegroundWindow()
+                cur = ctypes.windll.kernel32.GetCurrentThreadId()
+                fg_thread = user32.GetWindowThreadProcessId(fg, None)
+                if fg and fg_thread != cur and user32.AttachThreadInput(fg_thread, cur, True):
+                    user32.BringWindowToTop(hwnd)
+                    user32.SetForegroundWindow(hwnd)
+                    user32.AttachThreadInput(fg_thread, cur, False)
+            # 3) 그래도 안 되면 TOPMOST 토글로 Z순서만이라도 최상위 보장
+            if user32.GetForegroundWindow() != hwnd:
+                SWP = 0x0001 | 0x0002 | 0x0010      # NOSIZE|NOMOVE|NOACTIVATE
+                user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, SWP)   # HWND_TOPMOST
+                user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, SWP)   # HWND_NOTOPMOST
+        except Exception:
+            pass
 
     def _tray_hide_mode(self):
         self._show_normal()
@@ -2679,9 +2718,52 @@ class MainWindow(QMainWindow):
         if l.explanation:
             h.append(f"<div style='border-top:1px solid {BORDER};margin:24px 0 0;'></div>")
             h.append(sec("상세 설명 (더 알고 싶다면 ↓)"))
-            h.append(f"<div>{esc(l.explanation)}</div>")
+            h.append(self._format_explanation(l.explanation))
         h.append("</div>")
         self._show_html(h)
+
+    @staticmethod
+    def _format_explanation(text):
+        """상세 설명(explanation)을 읽기 좋게 HTML 로 변환.
+
+        [섹션] 줄은 구분 박스로, • 불릿은 들여쓰기로, 'code → 해설' 줄은
+        고정폭+색 구분으로 렌더링해 통짜 텍스트의 가독성 문제를 해소한다."""
+        out = []
+        for raw in str(text).split("\n"):
+            line = raw.rstrip()
+            s = line.strip()
+            if not s:                                    # 빈 줄 → 여백
+                out.append("<div style='height:7px;'></div>")
+                continue
+            if s.startswith("[") and s.endswith("]"):    # [개요] 같은 섹션 헤더
+                out.append(
+                    f"<div style='color:{PURPLE};font-weight:bold;font-size:13px;"
+                    f"margin:14px 0 6px;padding:4px 10px;background:{CARD};"
+                    f"border-left:3px solid {PURPLE};border-radius:3px;'>"
+                    f"{html.escape(s[1:-1])}</div>")
+                continue
+            if s.startswith("•"):                        # 불릿 항목
+                out.append(
+                    f"<div style='margin:2px 0 2px 12px;'>"
+                    f"<span style='color:{CYAN};'>•</span> "
+                    f"{html.escape(s[1:].strip())}</div>")
+                continue
+            if "→" in line:                              # 코드 → 해설 줄
+                code_part, _, desc = html.escape(line).partition("→")
+                out.append(
+                    f"<div style='font-family:{MONO_FAMILY};font-size:12px;"
+                    f"margin:1px 0 1px 12px;white-space:pre-wrap;'>"
+                    f"<span style='color:{YELLOW};'>{code_part.rstrip()}</span>"
+                    f"<span style='color:{COMMENT};'> → </span>"
+                    f"<span style='color:{FG};'>{desc.strip()}</span></div>")
+                continue
+            if line.startswith("      "):                # 깊은 들여쓰기 → 해설 연속 줄
+                out.append(
+                    f"<div style='font-family:{MONO_FAMILY};font-size:12px;color:{COMMENT};"
+                    f"margin:1px 0 1px 12px;white-space:pre-wrap;'>{html.escape(line)}</div>")
+                continue
+            out.append(f"<div style='margin:2px 0;white-space:pre-wrap;'>{html.escape(line)}</div>")
+        return "".join(out)
 
     def _run_lesson(self):
         l = self.current_lesson
@@ -3607,6 +3689,9 @@ def main():
     app.setStyleSheet(QSS)
     win = MainWindow()
     win.show()
+    # 실행 시 창이 다른 앱 뒤에 깔리지 않게 포그라운드로 (로딩 지연 대비 2회)
+    QTimer.singleShot(0, win._force_foreground)
+    QTimer.singleShot(300, win._force_foreground)
     sys.exit(app.exec())
 
 
