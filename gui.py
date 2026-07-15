@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
                                QTabWidget, QListWidget, QListWidgetItem)
 
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.2.2"
 
 # Run(실행만) 안전 제한 — 무한 루프/메모리 폭주 시 강제 종료
 RUN_TIMEOUT_S = 10        # 실행 시간 한도(초)

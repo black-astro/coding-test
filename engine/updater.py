@@ -111,19 +111,25 @@ def stage_zip(zip_path: Path) -> Path:
 
 def apply_and_restart(stage: Path):
     """앱 종료 대기 → 파일 교체 → 재시작하는 .bat 를 띄운다.
-    호출한 쪽은 이 함수가 True 를 돌려주면 즉시 앱을 종료해야 한다."""
+    호출한 쪽은 이 함수가 True 를 돌려주면 즉시 앱을 종료해야 한다.
+
+    주의: 이 bat 는 콘솔 없는(detached) cmd 에서 돈다.
+    - `A | B` 파이프라인은 detached cmd 에서 B 가 EOF 를 못 받아 영원히 멈출 수 있고,
+    - `timeout` 은 콘솔 입력이 없으면 실패한다.
+    그래서 파이프 대신 파일 리다이렉트+findstr, sleep 은 ping 을 쓴다. (v1.2.2 에서 수정)
+    """
     app = app_root()
     pid = os.getpid()
     bat = stage.parent / "apply_update.bat"
+    tl = stage.parent / "tasklist.txt"
     bat.write_text(
         "@echo off\r\n"
         "chcp 65001 >nul\r\n"
         ":wait\r\n"
-        f"tasklist /FI \"PID eq {pid}\" 2>nul | find \"{pid}\" >nul\r\n"
-        "if not errorlevel 1 (\r\n"
-        "  timeout /t 1 /nobreak >nul\r\n"
-        "  goto wait\r\n"
-        ")\r\n"
+        "ping -n 2 127.0.0.1 >nul\r\n"                       # 약 1초 대기 (콘솔 불필요)
+        f"tasklist /FI \"PID eq {pid}\" /NH >\"{tl}\" 2>nul\r\n"
+        f"findstr /C:\"{pid}\" \"{tl}\" >nul\r\n"
+        "if not errorlevel 1 goto wait\r\n"
         f"robocopy \"{stage}\" \"{app}\" /E /IS /IT >nul\r\n"
         f"start \"\" \"{app / 'codeT.exe'}\"\r\n"
         f"rd /s /q \"{stage.parent}\"\r\n",
