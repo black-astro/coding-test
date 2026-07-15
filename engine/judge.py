@@ -96,6 +96,8 @@ def _limits(problem, lang: str = "python"):
 
 def _verdict_for(run, expected_norm, actual_norm, tl_ms, ml_mb):
     """단일 실행 결과에 대한 판정."""
+    if getattr(run, "mem_exceeded", False):
+        return "MLE"            # 실행 중 메모리 한도 초과로 강제 종료됨
     if run.timed_out or run.time_ms > tl_ms:
         return "TLE"
     if run.returncode != 0:
@@ -145,7 +147,7 @@ def _judge_stdin(problem, source_path: Path, lang: str) -> JudgeResult:
     for i, tc in enumerate(problem.testcases, start=1):
         inp = tc["input"]
         expected = _normalize(tc["output"])
-        run = run_process(comp.run_cmd, inp, kill_s, cwd=comp.workdir)
+        run = run_process(comp.run_cmd, inp, kill_s, cwd=comp.workdir, mem_limit_mb=ml_mb)
         actual = _normalize(run.stdout)
         verdict = _verdict_for(run, expected, actual, tl_ms, ml_mb)
         err = ""
@@ -171,7 +173,7 @@ def _judge_func(problem, source_path: Path) -> JudgeResult:
             args_path = Path(td) / f"args_{i}.json"
             args_path.write_text(json.dumps(args), encoding="utf-8")
             cmd = func_cmd(FUNC_HARNESS, source_path, args_path, problem.func_name)
-            run = run_process(cmd, "", kill_s)
+            run = run_process(cmd, "", kill_s, mem_limit_mb=ml_mb)
             actual = _normalize(run.stdout)
             verdict = _verdict_for(run, expected, actual, tl_ms, ml_mb)
             err = ""

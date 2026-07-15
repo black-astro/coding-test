@@ -33,7 +33,11 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
                                QTabWidget, QListWidget, QListWidgetItem)
 
-APP_VERSION = "1.1.12"
+APP_VERSION = "1.1.13"
+
+# Run(실행만) 안전 제한 — 무한 루프/메모리 폭주 시 강제 종료
+RUN_TIMEOUT_S = 10        # 실행 시간 한도(초)
+RUN_MEM_MB = 1024         # 메모리 한도(MB)
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -233,18 +237,20 @@ QSlider#OpacitySlider::sub-page:horizontal {{ background:{PURPLE}; border-radius
 QSlider#OpacitySlider::handle:horizontal {{ width:12px; height:12px; margin:-5px 0; background:{PURPLE}; border-radius:6px; }}
 QSlider#OpacitySlider::handle:horizontal:hover {{ background:{PURPLE_D}; }}
 
-QScrollBar:vertical {{ background:transparent; width:11px; margin:4px 2px 4px 0; }}
-QScrollBar::handle:vertical {{ background:{CUR}; border-radius:5px; min-height:36px; }}
-QScrollBar::handle:vertical:hover {{ background:{COMMENT}; }}
+/* 스크롤바 — 얇은 라운드 필(pill). 평소엔 은은하게, 호버 시 또렷하게 */
+QScrollBar:vertical {{ background:transparent; width:14px; margin:4px 4px 4px 4px; border:none; }}
+QScrollBar::handle:vertical {{ background:rgba(98,114,164,140); border-radius:3px; min-height:42px; }}
+QScrollBar::handle:vertical:hover {{ background:rgba(139,149,199,235); }}
 QScrollBar::handle:vertical:pressed {{ background:{PURPLE}; }}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; background:transparent; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background:transparent; }}
-QScrollBar:horizontal {{ background:transparent; height:11px; margin:0 4px 2px 4px; }}
-QScrollBar::handle:horizontal {{ background:{CUR}; border-radius:5px; min-width:36px; }}
-QScrollBar::handle:horizontal:hover {{ background:{COMMENT}; }}
+QScrollBar:horizontal {{ background:transparent; height:14px; margin:4px 4px 4px 4px; border:none; }}
+QScrollBar::handle:horizontal {{ background:rgba(98,114,164,140); border-radius:3px; min-width:42px; }}
+QScrollBar::handle:horizontal:hover {{ background:rgba(139,149,199,235); }}
 QScrollBar::handle:horizontal:pressed {{ background:{PURPLE}; }}
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width:0; }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width:0; background:transparent; }}
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background:transparent; }}
+QAbstractScrollArea::corner {{ background:transparent; }}
 
 /* 콘솔/터미널 사이 드래그 핸들 — 눈에 띄게(가운데 그립) */
 QSplitter::handle {{ background:{GAP}; }}
@@ -269,6 +275,13 @@ QTabBar::tab:selected {{ background:{DIALOG_BG}; color:{CYAN}; }}
 QTabBar::tab:hover {{ color:{FG}; }}
 QMessageBox {{ background:{DIALOG_BG}; }}
 QMessageBox QLabel {{ background:transparent; color:{FG}; }}
+
+/* 하이드 모드 — 문제 오버레이(웹 모달 느낌) */
+#ProbOverlay {{ background:{DIALOG_BG}; border:1px solid {CUR}; border-radius:12px; }}
+#ProbOverlay QLabel {{ background:transparent; }}
+#OverlayProb {{ background:transparent; border:none; font-size:13px; }}
+QPushButton#OvBtn {{ background:{BG2}; border-radius:6px; padding:4px 10px; font-size:11px; }}
+QPushButton#OvBtn:hover {{ background:{CUR}; color:{CYAN}; }}
 """
 
 
@@ -659,14 +672,15 @@ class RunThread(QThread):
     def run(self):
         try:
             if self.cmd is not None:
-                r = run_process(self.cmd, self.stdin, 10)
+                r = run_process(self.cmd, self.stdin, RUN_TIMEOUT_S, mem_limit_mb=RUN_MEM_MB)
                 self.done.emit(("OK", r))
                 return
             comp = compile_solution(self.lang, self.path)
             if not comp.ok:
                 self.done.emit(("CE", comp.error))
                 return
-            r = run_process(comp.run_cmd, self.stdin, 10, cwd=comp.workdir)
+            r = run_process(comp.run_cmd, self.stdin, RUN_TIMEOUT_S, cwd=comp.workdir,
+                            mem_limit_mb=RUN_MEM_MB)
             self.done.emit(("OK", r))
         except Exception as e:  # noqa
             self.done.emit(("CE", str(e)))
@@ -1611,6 +1625,7 @@ class MainWindow(QMainWindow):
         hide_sc.setContext(Qt.ApplicationShortcut)
         hide_sc.activated.connect(self._toggle_hide_mode)
         self._shortcuts.append(hide_sc)
+        self._build_prob_overlay(central)                   # 하이드 모드 문제 오버레이
 
         self._hidden_mode = False
         self._saved_geometry = None
@@ -1801,6 +1816,9 @@ class MainWindow(QMainWindow):
 
     def _tray_hide_mode(self):
         self._show_normal()
+        if self._mode == "lesson":      # Ctrl+H 토글과 동일한 차단(레슨은 하이드 비호환)
+            self._set_status("하이드 모드는 문제/영단어에서만 사용할 수 있어요", ORANGE)
+            return
         self._set_hide_mode(True)
 
     def _quit_app(self):
@@ -1819,10 +1837,12 @@ class MainWindow(QMainWindow):
         self.hide_combo.addItem("— 문제 선택 —", None)
         for p in self._all_problems:
             tier = p.tier or RANK_INITIAL.get(p.rank, p.rank)
-            self.hide_combo.addItem(f"[{tier}] {p.title}", p.id)
+            mark = " 🔒" if self._is_locked(p) else (" ✓" if p.id in self.solved else "")
+            self.hide_combo.addItem(f"[{tier}] {p.title}{mark}", p.id)
         self.hide_combo.blockSignals(False)
 
     def _sync_hide_combo(self):
+        self._populate_hide_combo()     # 잠금/해결 표시를 항상 최신으로
         pid = self.current.id if self.current else None
         idx = self.hide_combo.findData(pid) if pid else 0
         self.hide_combo.setCurrentIndex(idx if idx >= 0 else 0)
@@ -1852,10 +1872,21 @@ class MainWindow(QMainWindow):
         self.rank_label.setVisible(not on)
         self.rank_bar.setVisible(not on)
         self.side_toggle.setVisible(not on)
+        # 문제 보기 버튼 — 하이드 + 문제 모드에서만
+        self.prob_btn.setVisible(on and self._mode == "problem")
+        if not (on and self._mode == "problem"):
+            self._close_prob_overlay()
+        # 시험 중 하이드: 시험 컨트롤(타이머·제출·포기)이 자리를 차지하므로
+        # 언어 세그먼트를 숨겨 좁은 헤더에서 버튼이 겹치지 않게 한다
+        in_exam = bool(getattr(self, "exam", None))
+        for b in self.lang_buttons.values():
+            b.setVisible((not on) or (not in_exam))
 
     def _set_hide_mode(self, on):
         """on: 사이드바 숨기고 컴팩트 창. 문제 모드는 에디터+터미널, 영단어 모드는 단어 카드만."""
-        if on and not self._hidden_mode:
+        if on == self._hidden_mode:
+            return
+        if on:
             self._saved_geometry = self.geometry()      # 들어가기 전 창 크기/위치 기억
         self._hidden_mode = on
         self._apply_hide_visibility()
@@ -1875,20 +1906,40 @@ class MainWindow(QMainWindow):
                 self.setGeometry(self._saved_geometry)   # 원래 창 크기/위치 복원
         self._position_overlay()
 
+    # 하이드 모드용 짧은 언어 라벨 — 좁은 헤더에서 버튼이 겹치지 않게
+    _LANG_SHORT = {"python": "Py", "java": "Jv", "cpp": "C+", "javascript": "JS"}
+    _LANG_FULL = {"python": "Python", "java": "Java", "cpp": "C++", "javascript": "JS"}
+
     def _set_compact_header(self, on):
-        """좁은 하이드 모드용 반응형 헤더 — Run은 'R', 제출은 아이콘만, 콤보·버튼 축소."""
+        """좁은 하이드 모드용 반응형 헤더 — 버튼을 아이콘/축약형으로 줄여 겹침 방지."""
         if on:
-            self.hide_combo.setMinimumWidth(140)
+            self.hide_combo.setMinimumWidth(120)
             self.run_btn.setText("R")
-            self.run_btn.setFixedWidth(32)
+            self.run_btn.setFixedWidth(30)
             self.run_btn.setToolTip("실행 (F5)")
-            self.submit_btn.setFixedWidth(34)
+            self.submit_btn.setFixedWidth(32)
             if qta:
                 self.submit_btn.setText("")
                 self.submit_btn.setIcon(qta.icon("fa5s.paper-plane", color=BG3))
             else:
                 self.submit_btn.setText("↑")
             self.submit_btn.setToolTip("제출 — 채점 (Ctrl+Enter)")
+            # 언어 세그먼트 축약(Py/Jv/C+/JS) + 패딩 축소
+            for code, b in self.lang_buttons.items():
+                b.setText(self._LANG_SHORT[code])
+                b.setStyleSheet(b.styleSheet() + "padding:4px 6px;")
+            # 힌트는 아이콘만, 설정 버튼은 숨김(트레이·해제 후 접근 가능)
+            self.hint_btn.setFixedWidth(30)
+            self.hint_btn.setText("" if qta else "💡")
+            if qta:
+                self.hint_btn.setIcon(qta.icon("fa5s.lightbulb", color=YELLOW))
+            self.settings_btn.setVisible(False)
+            self.hide_btn.setFixedWidth(30)
+            self.next_btn.setText("▶")
+            self.next_btn.setFixedWidth(30)
+            self.giveup_btn.setFixedWidth(40)
+            self.exam_end_btn.setText("채점")
+            self.exam_end_btn.setFixedWidth(44)
         else:
             self.hide_combo.setMinimumWidth(240)
             self.run_btn.setText("▶ Run")
@@ -1896,6 +1947,174 @@ class MainWindow(QMainWindow):
             self.submit_btn.setFixedWidth(74)
             self.submit_btn.setIcon(QIcon())
             self.submit_btn.setText("제출")
+            for code, b in self.lang_buttons.items():
+                b.setText(self._LANG_FULL[code])
+                b.setStyleSheet(b.styleSheet().replace("padding:4px 6px;", ""))
+            self.hint_btn.setFixedWidth(80)
+            self.hint_btn.setIcon(QIcon())
+            self.hint_btn.setText("💡 힌트")
+            self.settings_btn.setVisible(True)
+            self.hide_btn.setFixedWidth(40)
+            self.next_btn.setText("다음 문제 ▶")
+            self.next_btn.setFixedWidth(104)
+            self.giveup_btn.setFixedWidth(50)
+            self.exam_end_btn.setText("시험 제출")
+            self.exam_end_btn.setFixedWidth(78)
+
+    # ---- 하이드 모드 문제 오버레이 (웹 모달 느낌 · 펼침/접힘) ----
+    def _build_prob_overlay(self, parent):
+        # 뒷배경(백드롭) — 클릭하면 닫힘
+        shade = QFrame(parent)
+        shade.setStyleSheet("background:rgba(0,0,0,120);")
+        shade.hide()
+        shade.mousePressEvent = lambda e: self._close_prob_overlay()
+        self._prob_shade = shade
+
+        pnl = QFrame(parent)
+        pnl.setObjectName("ProbOverlay")
+        v = QVBoxLayout(pnl)
+        v.setContentsMargins(16, 10, 16, 12)
+        v.setSpacing(6)
+        head = QHBoxLayout()
+        head.setSpacing(6)
+        self._ov_title = QLabel("문제")
+        self._ov_title.setStyleSheet(f"color:{PURPLE}; font-size:14px; font-weight:bold;")
+        head.addWidget(self._ov_title, 1)
+        self._ov_fold = QPushButton("▴ 접기")
+        self._ov_fold.setObjectName("OvBtn")
+        self._ov_fold.setToolTip("문제를 접어서 제목 바만 남기기 (코딩하면서 다시 펼 수 있어요)")
+        self._ov_fold.clicked.connect(self._fold_prob_overlay)
+        head.addWidget(self._ov_fold)
+        close_b = QPushButton("✕")
+        close_b.setObjectName("OvBtn")
+        close_b.setFixedWidth(30)
+        close_b.setToolTip("닫기 (Esc)")
+        close_b.clicked.connect(self._close_prob_overlay)
+        head.addWidget(close_b)
+        v.addLayout(head)
+        self._ov_body = QTextBrowser()
+        self._ov_body.setObjectName("OverlayProb")
+        self._ov_body.setOpenExternalLinks(False)
+        pal = self._ov_body.palette()
+        pal.setColor(QPalette.Base, QColor(DIALOG_BG))
+        pal.setColor(QPalette.Text, QColor(FG))
+        self._ov_body.setPalette(pal)
+        v.addWidget(self._ov_body, 1)
+        pnl.hide()
+        self.prob_overlay = pnl
+        self._ov_collapsed = False
+
+        esc = QShortcut(QKeySequence("Escape"), self)   # 메인창 활성 시에만(다이얼로그 Esc 방해 없음)
+        esc.activated.connect(lambda: self._close_prob_overlay()
+                              if self.prob_overlay.isVisible() else None)
+        self._shortcuts.append(esc)
+
+    def _toggle_prob_overlay(self):
+        if self.prob_overlay.isVisible():
+            self._close_prob_overlay()
+            return
+        if self._mode != "problem" or not self.current:
+            self._set_status("문제를 선택하면 볼 수 있어요", ORANGE)
+            return
+        self._ov_collapsed = False
+        self._refresh_prob_overlay()
+        self.prob_overlay.show()
+        self._position_prob_overlay()
+
+    def _fold_prob_overlay(self):
+        self._ov_collapsed = not self._ov_collapsed
+        self._ov_body.setVisible(not self._ov_collapsed)
+        self._ov_fold.setText("▾ 펼치기" if self._ov_collapsed else "▴ 접기")
+        self._position_prob_overlay()
+
+    def _close_prob_overlay(self):
+        if getattr(self, "prob_overlay", None) is None:
+            return
+        self.prob_overlay.hide()
+        self._prob_shade.hide()
+
+    def _refresh_prob_overlay(self):
+        p = self._cur_active or self.current
+        if p is None:
+            return
+        tier = p.tier or RANK_INITIAL.get(p.rank, p.rank)
+        self._ov_title.setText(f"[{tier}] {p.title}")
+        self._ov_body.setHtml(self._problem_html(p))
+
+    def _position_prob_overlay(self):
+        if getattr(self, "prob_overlay", None) is None or not self.prob_overlay.isVisible():
+            return
+        c = self._central
+        m, top = 14, 46                       # 헤더(38px) 아래에서 시작
+        if self._ov_collapsed:
+            # 접힘: 제목 바만 위쪽에 — 백드롭 없이 코드 입력 가능
+            self._prob_shade.hide()
+            h = self.prob_overlay.layout().sizeHint().height()
+            self.prob_overlay.setGeometry(m, top, max(0, c.width() - 2 * m), h)
+        else:
+            self._prob_shade.setGeometry(0, 0, c.width(), c.height())
+            self._prob_shade.show()
+            self.prob_overlay.setGeometry(m, top, max(0, c.width() - 2 * m),
+                                          max(0, c.height() - top - m))
+        self._prob_shade.raise_()
+        self.prob_overlay.raise_()
+
+    def _problem_html(self, p):
+        """오버레이용 문제 HTML — 하이드 모드에서 문제 전문을 모달로 본다."""
+        esc = html.escape
+
+        def nl(t):
+            return esc(str(t)).replace("\n", "<br>")
+
+        def pre(t):
+            return (f"<div style='background:{BG2}; border-radius:8px; padding:2px 4px; margin:4px 0;'>"
+                    f"<pre style='margin:6px; color:{YELLOW}; font-family:\"{MONO_FAMILY}\", monospace;"
+                    f" font-size:12px; white-space:pre-wrap;'>{esc(str(t).rstrip())}</pre></div>")
+
+        def sec(t):
+            return f"<div style='color:{CYAN}; font-weight:bold; font-size:13px; margin:14px 0 4px;'>{t}</div>"
+
+        tier = p.tier or RANK_INITIAL.get(p.rank, p.rank)
+        meta = " · ".join(str(m) for m in (tier, p.topic) if m)
+        io = "stdin · stdout" if p.type == "stdin" else f"fn {p.func_name}()"
+        h = [f"<div style='color:{COMMENT}; font-size:11px;'>{esc(meta)} &nbsp;·&nbsp; {esc(io)}"
+             f" &nbsp;·&nbsp; ⏱ {p.time_limit_ms}ms &nbsp; 💾 {p.memory_limit_mb}MB</div>"]
+        if self._is_locked(p):
+            h.append(f"<div style='color:{ORANGE}; font-size:12px; font-weight:bold; margin-top:6px;'>"
+                     f"🔒 잠긴 문제 — {profile.RANK_KR.get(p.rank, p.rank)} 랭크 도달 시 풀 수 있어요</div>")
+        h += [sec("Description"),
+              f"<div style='color:{FG}; font-size:13px;'>{nl(p.description)}</div>"]
+        if p.input_desc:
+            h += [sec("Input"), f"<div style='color:{FG}; font-size:13px;'>{nl(p.input_desc)}</div>"]
+        if p.output_desc:
+            h += [sec("Output"), f"<div style='color:{FG}; font-size:13px;'>{nl(p.output_desc)}</div>"]
+        h.append(sec("Examples"))
+        for i, ex in enumerate(p.examples, 1):
+            if p.type == "stdin":
+                h.append(f"<div style='color:{COMMENT}; font-size:11px;'>in {i}</div>")
+                h.append(pre(ex["input"]))
+                h.append(f"<div style='color:{COMMENT}; font-size:11px;'>out {i}</div>")
+                h.append(pre(ex["output"]))
+            else:
+                args_repr = ", ".join(repr(a) for a in ex["args"])
+                h.append(pre(f"{p.func_name}({args_repr})  ->  {ex['output']!r}"))
+        rv = self._reveal
+        if rv >= 1 and p.hints:
+            names = ["접근 방향", "자료구조 · 알고리즘", "거의 정답"]
+            h.append(sec("힌트"))
+            for i in range(min(rv, 3)):
+                if i < len(p.hints):
+                    h.append(f"<div style='color:{PURPLE}; font-weight:bold; font-size:13px;"
+                             f" margin-top:6px;'>힌트 {i + 1} · {names[i]}</div>")
+                    h.append(f"<div style='color:{FG}; font-size:13px;'>{nl(p.hints[i])}</div>")
+        if rv >= 4:
+            sol = {"python": p.reference_py, "java": p.reference_java, "cpp": p.reference_cpp,
+                   "javascript": p.reference_js}.get(self.lang, "")
+            if not sol.strip():
+                sol = p.reference_py
+            h.append(sec("풀이 · 정답 코드"))
+            h.append(pre(sol))
+        return "".join(h)
 
     # ---- 전체 투명도 오버레이 (우측 하단, 상시) ----
     def _build_opacity_overlay(self, parent):
@@ -1944,6 +2163,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._position_overlay()
+        self._position_prob_overlay()
 
     # ---- 네이티브 타이틀바(캡션) 다크/색상 ----
     def showEvent(self, event):
@@ -2092,6 +2312,14 @@ class MainWindow(QMainWindow):
         self.next_btn = mkbtn("다음 문제 ▶", self._next_problem, tip="다음 문제 풀기")
         self.next_btn.setVisible(False)
         lay.addWidget(self.next_btn)
+
+        # 하이드 모드 전용 — 문제 보기(오버레이 모달) 토글. 평소 숨김
+        self.prob_btn = mkbtn("문제" if not qta else "", self._toggle_prob_overlay, w=30,
+                              tip="문제 보기 — 오버레이로 펼치기/접기 (Esc로 닫기)")
+        if qta:
+            self.prob_btn.setIcon(qta.icon("fa5s.file-alt", color=CYAN))
+        self.prob_btn.setVisible(False)
+        lay.addWidget(self.prob_btn)
 
         # 하이드(집중) 모드 토글
         self.hide_btn = mkbtn("집중" if not qta else "", self._toggle_hide_mode,
@@ -2966,6 +3194,17 @@ class MainWindow(QMainWindow):
             self._append(r.stdout if r.stdout.endswith("\n") else r.stdout + "\n", FG)
         if r.stderr:
             self._append(r.stderr + "\n", RED)
+        # 무한 루프/메모리 폭주 → 강제 종료를 명확한 실패로 표시
+        if getattr(r, "mem_exceeded", False):
+            self._append(f"\n✗ MEMORY LIMIT — {RUN_MEM_MB}MB 초과로 강제 종료했어요.\n", RED, bold=True)
+            self._append("  리스트 무한 append · 무한 재귀 등 메모리 폭주가 의심됩니다.\n", COMMENT)
+            self._set_status("memory limit", RED)
+            return
+        if r.timed_out:
+            self._append(f"\n✗ TIMEOUT — {RUN_TIMEOUT_S}초 초과로 강제 종료했어요.\n", RED, bold=True)
+            self._append("  while 무한 루프 · 입력 대기(input 개수 확인) 등이 의심됩니다.\n", COMMENT)
+            self._set_status("timeout", RED)
+            return
         self._append(f"\n[exit {r.returncode}]  ⏱ {r.time_ms:.0f}ms\n", COMMENT)
         self._set_status("done" if r.returncode == 0 else "error", GREEN if r.returncode == 0 else RED)
         # 실행만 한 것 — 다음 단계(채점) 안내로 초보자 혼동 방지
@@ -3145,6 +3384,7 @@ class MainWindow(QMainWindow):
         self.exam_label.setVisible(True)
         self.exam_end_btn.setVisible(True)
         self.giveup_btn.setVisible(True)
+        self._apply_hide_visibility()       # 하이드 중이면 헤더 밀도 갱신(언어 세그 숨김)
         self.exam_timer.start()
         self._tick_exam()
         self._mode = "problem"
@@ -3165,6 +3405,7 @@ class MainWindow(QMainWindow):
         self.giveup_btn.setVisible(False)
         self._clear_exam_group()
         self.exam = None
+        self._apply_hide_visibility()       # 하이드 중이면 언어 세그 복원
         self.out.clear()
         self._append("시험을 포기했습니다.\n", COMMENT)
         self._set_status("시험 포기", COMMENT)
@@ -3246,6 +3487,7 @@ class MainWindow(QMainWindow):
         self.giveup_btn.setVisible(False)
         self._clear_exam_group()
         self.exam = None
+        self._apply_hide_visibility()       # 하이드 중이면 언어 세그 복원
 
     def _sol_path(self, p, lang):
         return SOLUTIONS_DIR / p.id / runner.LANGUAGES[lang]["filename"]
@@ -3346,6 +3588,9 @@ class MainWindow(QMainWindow):
     # 문제 렌더링 (네이티브 위젯)
     def _render_problem(self, p):
         self.content.setCurrentWidget(self.prob_view)
+        # 하이드 모드 오버레이가 열려 있으면 같은 내용으로 갱신(문제 이동·힌트 공개 반영)
+        if getattr(self, "prob_overlay", None) is not None and self.prob_overlay.isVisible():
+            self._refresh_prob_overlay()
         v = self.prob_view
         v.clear()
 
@@ -3412,7 +3657,8 @@ class MainWindow(QMainWindow):
                     v.add(make_label(p.hints[i], FG, 13))
         if rv >= 4:
             lang = self.lang
-            sol = {"python": p.reference_py, "java": p.reference_java, "cpp": p.reference_cpp}[lang]
+            sol = {"python": p.reference_py, "java": p.reference_java, "cpp": p.reference_cpp,
+                   "javascript": p.reference_js}.get(lang, "")
             if not sol.strip():
                 lang, sol = "python", p.reference_py
             section("풀이 · 정답 코드")
@@ -3439,7 +3685,14 @@ class MainWindow(QMainWindow):
             return
         self._reveal = max(self._reveal, level)
         self._render_problem(self._cur_active or self.current)
+        # 하이드 모드: 문제 카드가 숨겨져 있으므로 오버레이를 열어 힌트를 보여준다
+        if self._hidden_mode and self._mode == "problem" and not self.prob_overlay.isVisible():
+            self._toggle_prob_overlay()
         QTimer.singleShot(0, self._scroll_prob_bottom)
+
+    def _scroll_overlay_bottom(self):
+        ob = self._ov_body.verticalScrollBar()
+        ob.setValue(ob.maximum())
 
     def _show_html(self, h):
         """HTML 화면(레슨/가이드/시험/영단어)으로 전환 + 내용 표시."""
@@ -3449,6 +3702,8 @@ class MainWindow(QMainWindow):
     def _scroll_prob_bottom(self):
         sb = self.prob_view.verticalScrollBar()
         sb.setValue(sb.maximum())
+        if getattr(self, "prob_overlay", None) is not None and self.prob_overlay.isVisible():
+            self._scroll_overlay_bottom()
 
     def _tree_menu(self, pos):
         """사이드바 트리 우클릭 — 문제 항목이면 힌트/정답/풀이 폴더 바로가기."""

@@ -70,6 +70,7 @@ class RunResult:
     time_ms: float
     peak_mem_kb: int | None
     timed_out: bool
+    mem_exceeded: bool = False   # 메모리 한도 초과로 강제 종료됨
 
 
 def _kill_tree(proc):
@@ -85,8 +86,14 @@ def _kill_tree(proc):
         pass
 
 
-def run_process(cmd, stdin_text: str, timeout_s: float, cwd=None) -> RunResult:
-    """명령을 실행하고 시간·메모리를 측정한다."""
+def run_process(cmd, stdin_text: str, timeout_s: float, cwd=None,
+                mem_limit_mb: int | None = None) -> RunResult:
+    """명령을 실행하고 시간·메모리를 측정한다.
+
+    mem_limit_mb 를 주면 실행 중 메모리를 주기적으로 감시해, 한도를 넘는 즉시
+    프로세스를 강제 종료한다(무한 append/재귀 같은 메모리 폭주로부터 시스템 보호).
+    시간 초과도 감시 루프에서 함께 처리한다.
+    """
     # 자식 파이썬 프로세스의 표준입출력을 UTF-8 로 고정 (한국어 Windows cp949 문제 방지)
     env = dict(os.environ)
     env.setdefault("PYTHONIOENCODING", "utf-8")
@@ -109,17 +116,50 @@ def run_process(cmd, stdin_text: str, timeout_s: float, cwd=None) -> RunResult:
     except OSError as e:
         # 실행 파일이 사라졌거나(백신 격리 등) 실행 불가 → RE 로 처리
         return RunResult("", f"실행 실패: {e}", -1, 0.0, None, False)
-    timed_out = False
-    try:
-        out, err = proc.communicate(input=stdin_text, timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        _kill_tree(proc)
+
+    # communicate 는 별도 스레드에서 — 본 스레드는 시간/메모리 감시(watchdog)
+    import threading
+    comm: dict = {}
+
+    def _communicate():
         try:
-            out, err = proc.communicate(timeout=5)
+            comm["out"], comm["err"] = proc.communicate(input=stdin_text)
         except Exception:
-            out, err = "", ""
+            comm.setdefault("out", "")
+            comm.setdefault("err", "")
+
+    reader = threading.Thread(target=_communicate, daemon=True)
+    reader.start()
+
+    timed_out = False
+    mem_exceeded = False
+    peak_live = None
+    deadline = t0 + timeout_s
+    while True:
+        reader.join(0.05)
+        if not reader.is_alive():
+            break
+        if IS_WINDOWS and mem_limit_mb:
+            try:
+                m = _peak_working_set_kb(proc._handle)
+            except Exception:
+                m = None
+            if m:
+                peak_live = m if peak_live is None else max(peak_live, m)
+                if m > mem_limit_mb * 1024:
+                    mem_exceeded = True
+                    _kill_tree(proc)
+                    reader.join(5)
+                    break
+        if time.perf_counter() >= deadline:
+            timed_out = True
+            _kill_tree(proc)
+            reader.join(5)
+            break
     t1 = time.perf_counter()
+
+    out = comm.get("out") or ""
+    err = comm.get("err") or ""
 
     peak = None
     try:
@@ -127,14 +167,19 @@ def run_process(cmd, stdin_text: str, timeout_s: float, cwd=None) -> RunResult:
             peak = _peak_working_set_kb(proc._handle)
     except Exception:
         peak = None
+    if peak is None:
+        peak = peak_live
+    elif peak_live is not None:
+        peak = max(peak, peak_live)
 
     return RunResult(
-        stdout=out or "",
-        stderr=err or "",
+        stdout=out,
+        stderr=err,
         returncode=proc.returncode if proc.returncode is not None else -1,
         time_ms=(t1 - t0) * 1000.0,
         peak_mem_kb=peak,
         timed_out=timed_out,
+        mem_exceeded=mem_exceeded,
     )
 
 
