@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
                                QTabWidget, QListWidget, QListWidgetItem)
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 # Run(실행만) 안전 제한 — 무한 루프/메모리 폭주 시 강제 종료
 RUN_TIMEOUT_S = 10        # 실행 시간 한도(초)
@@ -1510,8 +1510,8 @@ class SettingsDialog(QDialog):
         toggle(l4, "boss_key", "보스 키 (Ctrl+Shift+H)",
                "다른 프로그램을 쓰는 중에도 Ctrl+Shift+H 를 누르면 즉시 트레이로 숨기고, "
                "다시 누르면 복원합니다. (재시작 후 적용)")
-        toggle(l4, "update_check", "시작 시 새 버전 확인",
-               "프로그램을 켤 때 GitHub 릴리즈에서 새 버전이 있는지 확인해 알려줍니다.")
+        toggle(l4, "update_check", "새 버전 자동 확인",
+               "시작할 때 + 10분마다 백그라운드로 GitHub 릴리즈에서 새 버전을 확인해 알려줍니다.")
         l4.addStretch(1)
 
         # ---- 관리 ----
@@ -1747,11 +1747,15 @@ class MainWindow(QMainWindow):
         self.solve_timer.timeout.connect(self._tick_solve_timer)
         self.solve_timer.start()
 
-        # 새 버전 확인 (시작 3초 후 비동기 — 시작 속도에 영향 없음)
+        # 새 버전 확인 (시작 3초 후 + 이후 10분마다 백그라운드 — 켜둔 채로 써도 알림)
         self._update_info = None
         self._update_busy = False
         if self.settings.get_bool("update_check"):
             QTimer.singleShot(3000, self._start_update_check)
+        self.update_timer = QTimer(self)
+        self.update_timer.setInterval(10 * 60 * 1000)
+        self.update_timer.timeout.connect(self._periodic_update_check)
+        self.update_timer.start()
 
         # 보스 키 (전역 단축키 Ctrl+Shift+H)
         self._boss_registered = False
@@ -2482,6 +2486,12 @@ class MainWindow(QMainWindow):
         return super().nativeEvent(eventType, message)
 
     # ---- 업데이트 (GitHub 릴리즈) ----
+    def _periodic_update_check(self):
+        """10분 주기 백그라운드 확인 — 이미 새 버전을 알고 있으면 재확인하지 않는다."""
+        if (self.settings.get_bool("update_check")
+                and self._update_info is None and not self._update_busy):
+            self._start_update_check()
+
     def _start_update_check(self, manual=False):
         self._update_manual = manual
         th = UpdateCheckThread()
@@ -3229,10 +3239,12 @@ class MainWindow(QMainWindow):
                 for les in items:
                     self._add_lesson(lvnode, les)
 
-        # 2) 랭크 (랭크별 문제 — 실전 문제도 난이도에 맞게 포함)
+        # 2) 랭크 (랭크별 문제 — 실전 문제도 난이도에 맞게 포함 · SQL 은 전용 섹션으로 분리)
         rk = self._group_item(self.tree, "랭크", top=True)
         rank_groups = {r: [] for r in problems.RANKS}
         for p in self._all_problems:
+            if p.type == "sql":
+                continue
             if p.rank in rank_groups:
                 rank_groups[p.rank].append(p)
         for r in problems.RANKS:
@@ -3242,15 +3254,31 @@ class MainWindow(QMainWindow):
                 self._add_problem(node, p)
         rk.setExpanded(True)        # 랭크만 상시 펼침(하위 브론즈~플래티넘은 닫힌 채로)
 
-        # 4) 실전 (유형별)
+        # 4) 실전 (유형별 — 코딩 문제만, SQL 은 아래 전용 섹션)
         pr = self._group_item(self.tree, "실전", top=True)
         for cat in practice.CATEGORIES:
+            if cat == "SQL":
+                continue
             plist = practice.ALL.get(cat, [])
             if not plist:
                 continue
             node = self._group_item(pr, f"{cat}")
             for p in plist:
                 self._add_problem(node, p)
+
+        # 4.5) SQL — 일반 언어 문제와 분리한 전용 섹션 (난이도별 하위 그룹)
+        sql_all = practice.ALL.get("SQL", [])
+        if sql_all:
+            sq = self._group_item(self.tree, "SQL", top=True)
+            for label, rank in [("기초 · 문법 함정", "Bronze"),
+                                ("집계 · JOIN", "Silver"),
+                                ("서브쿼리 · 윈도우", "Gold")]:
+                plist = [p for p in sql_all if p.rank == rank]
+                if not plist:
+                    continue
+                node = self._group_item(sq, f"{label} ({len(plist)})")
+                for p in plist:
+                    self._add_problem(node, p)
 
         # 5) 종목별 (기초→고급)
         ptg = self._group_item(self.tree, "종목", top=True)

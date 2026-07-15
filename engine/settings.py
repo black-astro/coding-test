@@ -19,7 +19,7 @@ DEFAULTS = {
     "exam_to_progress": "1",   # 모의고사 정답을 영구 풀이 기록에도 반영
     "solve_timer": "1",        # 문제별 풀이 시간 측정(⏱ 표시 · 통계에 기록)
     "efficiency_compare": "1", # 정답 시 내 코드 vs 정답 코드 시간/메모리 비교
-    "update_check": "1",       # 시작 시 새 버전 확인 (GitHub 릴리즈)
+    "update_check": "1",       # 새 버전 자동 확인 (시작 시 + 10분 주기, GitHub 릴리즈)
     "boss_key": "1",           # 전역 보스 키 Ctrl+Shift+H — 즉시 트레이로 숨김
 }
 
