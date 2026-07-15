@@ -119,6 +119,8 @@ def judge(problem, source_path, lang: str = "python") -> JudgeResult:
         )
 
     try:
+        if problem.type == "sql":
+            return _judge_sql(problem, source_path)
         if problem.type == "func":
             return _judge_func(problem, source_path)
         return _judge_stdin(problem, source_path, lang)
@@ -187,6 +189,47 @@ def _judge_func(problem, source_path: Path) -> JudgeResult:
                 time_ms=run.time_ms, peak_mem_kb=run.peak_mem_kb, error=err,
             ))
     return _summarize(cases, "python")
+
+
+def _judge_sql(problem, source_path: Path) -> JudgeResult:
+    """SQL 문제 채점 — 인메모리 sqlite 에서 사용자의 SELECT 를 실행해 결과 비교."""
+    import time as _time
+    import sqlite3
+    from engine.sqlrun import run_query, QueryTimeout
+
+    try:
+        query = Path(source_path).read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return JudgeResult(0, 0, [], False, lang="sql",
+                           unsupported=f"풀이 파일을 읽을 수 없습니다: {e}")
+    # 주석만 있고 실질 쿼리가 없으면 안내
+    stripped = "\n".join(ln for ln in query.splitlines()
+                         if not ln.strip().startswith("--")).strip()
+    if not stripped:
+        return JudgeResult(0, 0, [], False, lang="sql",
+                           unsupported="SELECT 쿼리를 작성한 뒤 제출하세요.")
+
+    cases = []
+    for i, tc in enumerate(problem.testcases, start=1):
+        expected = _normalize(tc["output"])
+        t0 = _time.perf_counter()
+        try:
+            actual_text, _cols = run_query(tc["input"], query, timeout_s=5.0)
+            verdict_err = ""
+            verdict = "AC" if _normalize(actual_text) == expected else "WA"
+            actual = _normalize(actual_text)
+        except QueryTimeout as e:
+            verdict, actual, verdict_err = "TLE", "", str(e)
+        except (sqlite3.Error, sqlite3.Warning) as e:
+            verdict, actual, verdict_err = "RE", "", f"{type(e).__name__}: {e}"
+        ms = (_time.perf_counter() - t0) * 1000.0
+        cases.append(CaseResult(
+            i, verdict,
+            given_input="(데이터셋 %d)" % i,     # 셋업 스크립트 전체는 장황 — 축약 표기
+            expected=expected, actual=actual,
+            time_ms=ms, peak_mem_kb=None, error=verdict_err,
+        ))
+    return _summarize(cases, "sql")
 
 
 def _summarize(cases, lang) -> JudgeResult:

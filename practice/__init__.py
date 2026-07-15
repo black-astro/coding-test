@@ -32,6 +32,7 @@ CATEGORIES = [
     "유니온파인드",
     "힙/우선순위큐",
     "세그먼트트리",
+    "SQL",
 ]
 
 # 유형별 한 줄 설명 (CLI 표시용)
@@ -49,12 +50,14 @@ CATEGORY_DESC = {
     "유니온파인드": "연결 여부·그룹 합치기. find/union",
     "힙/우선순위큐": "우선순위가 계속 바뀌는 문제. 더 맵게·스케줄링",
     "세그먼트트리": "구간 질의+갱신, 대량 쿼리. 상위권/고난도",
+    "SQL": "SELECT/JOIN/GROUP BY/서브쿼리/윈도우. 금융·공기업 IT 필수",
 }
 
 ALL = {c: [] for c in CATEGORIES}
 
 _CATEGORY_MODULES = ["impl", "sort", "bfs", "bruteforce", "hash", "twopointer",
-                     "binsearch", "greedy", "dp", "dijkstra", "union", "heap", "segtree"]
+                     "binsearch", "greedy", "dp", "dijkstra", "union", "heap", "segtree",
+                     "sql"]
 
 _cat_dir = Path(__file__).parent / "categories"
 _names = []

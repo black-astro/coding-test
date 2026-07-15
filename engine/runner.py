@@ -193,6 +193,8 @@ LANGUAGES = {
     # 웹(학습 전용) — 채점이 아니라 컴파일/렌더 결과를 보여줌
     "css":        {"name": "CSS",        "ext": ".css",  "filename": "style.css"},
     "scss":       {"name": "SCSS",       "ext": ".scss", "filename": "style.scss"},
+    # SQL 문제 전용(내장 sqlite 로 채점 — 별도 설치 불필요)
+    "sql":        {"name": "SQL",        "ext": ".sql",  "filename": "solution.sql"},
 }
 
 
@@ -269,7 +271,7 @@ def _java_tools():
 
 
 def compiler_available(lang: str) -> bool:
-    if lang == "python":
+    if lang in ("python", "sql"):       # sql 은 파이썬 내장 sqlite3 로 채점
         return True
     if lang == "java":
         javac, java = _java_tools()

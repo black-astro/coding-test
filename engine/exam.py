@@ -99,6 +99,8 @@ def assemble(preset, seed, all_problems):
     rng = random.Random(seed)
     by_rank = defaultdict(list)
     for p in all_problems:
+        if p.type == "sql":              # SQL 은 별도 연습 유형 — 코딩 모의고사엔 제외
+            continue
         by_rank[p.rank].append(p)
     chosen = []
     for rank, n in preset["dist"].items():       # dist 에는 플래티넘이 없음

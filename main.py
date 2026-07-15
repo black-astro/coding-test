@@ -130,6 +130,8 @@ def solution_file(p, lang) -> Path:
 
 
 def template_for(p, lang) -> str:
+    if lang == "sql" or p.type == "sql":
+        return "-- 문제 조건에 맞는 SELECT 쿼리를 작성하세요 (정렬 조건 포함).\nSELECT \n"
     if lang == "python":
         return p.template_py or "def solution():\n    pass\n"
     if lang == "java":
@@ -161,8 +163,10 @@ def difficulty_tag(p):
 def show_problem(p):
     mark = "✓ " if p.id in SOLVED else ""
     header(f"{mark}[{p.id}] {p.title}   ({difficulty_tag(p)})")
-    style = "표준입출력형(stdin)" if p.type == "stdin" else f"함수 구현형(func) — 함수명: {p.func_name}()"
-    langs = "Python · Java · C++" if p.type == "stdin" else "Python (Java/C++는 정답 코드 참고용)"
+    style = {"stdin": "표준입출력형(stdin)",
+             "sql": "SQL — SELECT 쿼리 작성"}.get(p.type, f"함수 구현형(func) — 함수명: {p.func_name}()")
+    langs = {"stdin": "Python · Java · C++",
+             "sql": "SQL (내장 sqlite 로 채점)"}.get(p.type, "Python (Java/C++는 정답 코드 참고용)")
     print(f"출제 스타일 : {p.style} · {p.topic}")
     print(f"채점 방식   : {style}")
     print(f"풀이 가능   : {langs}")
@@ -177,12 +181,12 @@ def show_problem(p):
         print(p.output_desc)
     print("\n[예제]")
     for i, ex in enumerate(p.examples, 1):
-        if p.type == "stdin":
+        if p.type in ("stdin", "sql"):
             print(f"  · 예제 {i}")
-            print("    입력:")
-            for ln in ex["input"].rstrip("\n").split("\n"):
+            print("    입력:" if p.type == "stdin" else "    데이터:")
+            for ln in str(ex["input"]).rstrip("\n").split("\n"):
                 print(f"      {ln}")
-            print("    출력:")
+            print("    출력:" if p.type == "stdin" else "    조회 결과:")
             for ln in str(ex["output"]).rstrip("\n").split("\n"):
                 print(f"      {ln}")
         else:
@@ -211,7 +215,7 @@ def choose_language():
 
 
 def start_solving(p):
-    lang = session["lang"]
+    lang = "sql" if p.type == "sql" else session["lang"]
     if p.type == "func" and lang != "python":
         print(f"\n※ 이 문제는 함수 구현형이라 {runner.LANGUAGES[lang]['name']}로는 채점되지 않습니다.")
         print("  Python으로 풀거나, 정답 코드 보기로 참고하세요.")
@@ -222,12 +226,14 @@ def start_solving(p):
     print("\n이 파일을 열어 코드를 작성한 뒤 '채점하기'를 선택하세요.")
     if p.type == "func":
         print(f"\n※ '{p.func_name}' 함수를 정의하고 결과를 return 하세요.")
+    elif p.type == "sql":
+        print("\n※ 문제 조건에 맞는 SELECT 쿼리를 작성하세요. (정렬 순서까지 일치해야 정답)")
     else:
         print("\n※ 표준입력(input/Scanner/cin)으로 읽고 표준출력(print/System.out/cout)으로 출력하세요.")
 
 
 def run_judge(p):
-    lang = session["lang"]
+    lang = "sql" if p.type == "sql" else session["lang"]
     if p.type == "func" and lang != "python":
         print(f"\n※ 함수 구현형 문제는 Python으로만 채점됩니다. 현재 언어: {runner.LANGUAGES[lang]['name']}")
         return
@@ -292,6 +298,10 @@ def show_hint(p, level):
 
 
 def show_reference(p, lang):
+    if p.type == "sql":
+        header("정답 쿼리 (SQL)")
+        print(p.reference_sql.strip() or "정답 쿼리가 아직 준비되지 않았습니다.")
+        return
     name = {"python": "Python", "java": "Java", "cpp": "C++"}[lang]
     header(f"정답 코드 ({name})")
     code = {"python": p.reference_py, "java": p.reference_java, "cpp": p.reference_cpp}[lang]

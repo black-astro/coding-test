@@ -20,6 +20,7 @@ class Problem:
     # --- 채점 방식 ---
     # "stdin": 표준입력을 받아 표준출력으로 답을 내는 백준 스타일
     # "func" : 함수를 구현해서 반환값으로 답을 내는 프로그래머스 스타일
+    # "sql"  : SELECT 쿼리를 작성해 조회 결과를 맞히는 프로그래머스 SQL 스타일
     type: str = "stdin"
     func_name: str = "solution"     # type="func" 일 때 구현해야 할 함수 이름
 
@@ -48,6 +49,7 @@ class Problem:
     reference_java: str = ""
     reference_cpp: str = ""
     reference_js: str = ""
+    reference_sql: str = ""     # type="sql" 전용 정답 쿼리
 
     # --- 풀이 템플릿 (solutions/ 에 자동 생성될 시작 코드) ---
     template_py: str = ""

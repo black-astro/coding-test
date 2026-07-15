@@ -120,6 +120,7 @@ while (left <= right) {            // 파라메트릭 이분탐색
 | 유니온파인드 | Gold 36~50 | ✅ |
 | 힙/우선순위큐 | Silver 21~35, Gold | ✅ |
 | 세그먼트트리 | Platinum 04, 21~35 | ✅ |
+| SQL (SQLD 수준) | — | ✅ sql-01~50 (기초 함정/집계·JOIN/서브쿼리·윈도우) |
 
 ---
 
@@ -129,5 +130,6 @@ while (left <= right) {            // 파라메트릭 이분탐색
 - `problems/__init__.py` 가 base + `batches/` + `meta/` 를 자동 수집한다.
 - `practice/__init__.py` 가 `categories/` 를 자동 수집한다.
 - 정답 코드(`reference_py`)는 **반드시** 자기 `testcases` 를 통과해야 한다 — 추가/수정 후 `python tools/selftest.py` 와 `python tools/verify_batch.py <파일>` 로 검증.
-- 채점은 표준입출력(stdin)형은 Python/Java/C++ 모두, 함수형(func)은 Python만.
+- 채점은 표준입출력(stdin)형은 Python/Java/C++ 모두, 함수형(func)은 Python만, SQL형(sql)은 내장 sqlite.
+- SQL 문제는 `practice/sqlbank/batch_*.py` 에 정의하고 `practice/categories/sql.py` 가 import 시 `reference_sql` 을 실행해 기대 출력을 자동 계산한다(기대값-정답 불일치 원천 차단). 새 SQL 문제는 reference_sql 에 ORDER BY 필수 + 정렬 유일성 보장.
 - C++ 채점은 `g++` 필요(미설치 시 자동 비활성). 자바는 javac 와 같은 JDK 의 java 를 사용(구버전 JRE 회피).

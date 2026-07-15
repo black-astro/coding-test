@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
                                QTabWidget, QListWidget, QListWidgetItem)
 
-APP_VERSION = "1.1.13"
+APP_VERSION = "1.2.0"
 
 # Run(실행만) 안전 제한 — 무한 루프/메모리 폭주 시 강제 종료
 RUN_TIMEOUT_S = 10        # 실행 시간 한도(초)
@@ -103,8 +103,10 @@ import lessons
 import vocab
 from vocab.progress import VocabDB
 from engine.settings import SettingsDB
+from engine.stats import StatsDB
+from engine.snippets import SNIPPETS
 from engine.judge import judge as judge_problem, VERDICT_KR, effective_limits
-from engine import runner, profile, topics, variants, exam
+from engine import runner, profile, topics, variants, exam, updater
 from engine.runner import compile_solution, run_process
 
 try:
@@ -296,6 +298,10 @@ KEYWORDS = {
     "cpp": """include using namespace int long double float char bool short unsigned signed void return if else
         for while do switch case default break continue new delete class struct public private protected const auto
         template typename static virtual override this sizeof""".split(),
+    "sql": """SELECT FROM WHERE GROUP BY HAVING ORDER LIMIT OFFSET AS ON JOIN LEFT RIGHT INNER OUTER CROSS
+        AND OR NOT IN BETWEEN LIKE IS NULL DISTINCT UNION ALL EXISTS CASE WHEN THEN ELSE END WITH OVER
+        PARTITION ASC DESC COUNT SUM AVG MIN MAX ROUND IFNULL COALESCE SUBSTR LENGTH UPPER LOWER REPLACE
+        STRFTIME ROW_NUMBER RANK DENSE_RANK CREATE TABLE INSERT INTO VALUES""".split(),
 }
 LITERALS = {"python": "None True False".split(), "java": "null true false".split(), "cpp": "true false nullptr".split()}
 PY_BUILTINS = """print len range int str list dict set tuple map filter sorted reversed input sum max min abs
@@ -328,7 +334,10 @@ class Highlighter(QSyntaxHighlighter):
         kw = KEYWORDS.get(self.lang, [])
         lits = LITERALS.get(self.lang, [])
         if kw:
-            self.rules.append((QRegularExpression(r"\b(" + "|".join(kw) + r")\b"), _fmt(PINK, bold=True)))
+            rx = QRegularExpression(r"\b(" + "|".join(kw) + r")\b")
+            if self.lang == "sql":       # SQL 키워드는 대소문자 구분 없음
+                rx.setPatternOptions(QRegularExpression.CaseInsensitiveOption)
+            self.rules.append((rx, _fmt(PINK, bold=True)))
         if lits:
             self.rules.append((QRegularExpression(r"\b(" + "|".join(lits) + r")\b"), _fmt(PURPLE)))
         if self.lang == "python":
@@ -337,7 +346,7 @@ class Highlighter(QSyntaxHighlighter):
         self.rules.append((QRegularExpression(r'"([^"\\]|\\.)*"'), _fmt(YELLOW)))
         self.rules.append((QRegularExpression(r"'([^'\\]|\\.)*'"), _fmt(YELLOW)))
         # 주석은 마지막(우선 적용)
-        com = r"#[^\n]*" if self.lang == "python" else r"//[^\n]*"
+        com = {"python": r"#[^\n]*", "sql": r"--[^\n]*"}.get(self.lang, r"//[^\n]*")
         self.com_rule = (QRegularExpression(com), _fmt(COMMENT, italic=True))
 
     def highlightBlock(self, text):
@@ -456,6 +465,13 @@ class CodeEditor(QPlainTextEdit):
     def contextMenuEvent(self, event):
         menu = self.createStandardContextMenu()
         menu.addSeparator()
+        # 알고리즘 템플릿 삽입 — 현재 언어의 뼈대 코드를 커서 위치에
+        snips = SNIPPETS.get(self.highlighter.lang, [])
+        if snips:
+            sub = menu.addMenu("📋 템플릿 삽입")
+            for name, code in snips:
+                a = sub.addAction(name)
+                a.triggered.connect(lambda _=False, c=code: self.textCursor().insertText(c))
         act = menu.addAction("▶ 실행 (F5)")
         act.triggered.connect(lambda: self.run_callback() if self.run_callback else None)
         menu.exec(event.globalPos())
@@ -684,6 +700,70 @@ class RunThread(QThread):
             self.done.emit(("OK", r))
         except Exception as e:  # noqa
             self.done.emit(("CE", str(e)))
+
+
+class SqlRunThread(QThread):
+    """SQL 문제 Run — 예제 데이터셋에 사용자 쿼리를 실행해 결과만 보여준다(채점 아님)."""
+    done = Signal(object)   # ("OK", (rows_text, cols)) | ("ERR", msg)
+
+    def __init__(self, setup_sql, query):
+        super().__init__()
+        self.setup_sql, self.query = setup_sql, query
+
+    def run(self):
+        try:
+            from engine.sqlrun import run_query
+            text, cols = run_query(self.setup_sql, self.query, timeout_s=5.0)
+            self.done.emit(("OK", (text, cols)))
+        except Exception as e:  # noqa
+            self.done.emit(("ERR", f"{type(e).__name__}: {e}"))
+
+
+class EffThread(QThread):
+    """효율성 비교 — 정답 코드를 같은 테스트케이스로 채점해 시간/메모리를 잰다."""
+    done = Signal(object)   # (JudgeResult, lang) | Exception
+
+    def __init__(self, p, lang, ref_code):
+        super().__init__()
+        self.p, self.lang, self.ref_code = p, lang, ref_code
+
+    def run(self):
+        import tempfile
+        try:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+                ext = runner.LANGUAGES[self.lang]["filename"]
+                path = Path(td) / ext
+                path.write_text(self.ref_code, encoding="utf-8")
+                res = judge_problem(self.p, path, self.lang)
+            self.done.emit((res, self.lang))
+        except Exception as e:  # noqa
+            self.done.emit(e)
+
+
+class UpdateCheckThread(QThread):
+    done = Signal(object)   # dict | None
+
+    def run(self):
+        self.done.emit(updater.check_latest())
+
+
+class UpdateDownloadThread(QThread):
+    """릴리즈 zip 다운로드 + 압축 해제(교체 대기)."""
+    progress = Signal(int, int)          # got, total
+    done = Signal(object)                # Path(stage) | Exception
+
+    def __init__(self, zip_url):
+        super().__init__()
+        self.zip_url = zip_url
+
+    def run(self):
+        try:
+            zp = updater.download_zip(self.zip_url,
+                                      progress_cb=lambda g, t: self.progress.emit(g, t))
+            stage = updater.stage_zip(zp)
+            self.done.emit(stage)
+        except Exception as e:  # noqa
+            self.done.emit(e)
 
 
 # ───────────────────────── 영단어 퀴즈 ─────────────────────────
@@ -1394,6 +1474,10 @@ class SettingsDialog(QDialog):
                "채점에 통과하면 잠시 후 같은 목록의 다음 문제로 자동 이동합니다.")
         toggle(l2, "autofill_stdin", "Run 시 예제 입력 자동 사용",
                "입력칸이 비어 있으면 그 문제의 첫 예제 입력으로 실행합니다.")
+        toggle(l2, "solve_timer", "풀이 시간 측정",
+               "문제별 풀이 시간을 재서 화면에 표시하고 통계에 기록합니다.")
+        toggle(l2, "efficiency_compare", "정답 시 효율성 비교",
+               "채점 통과 시 정답 코드도 함께 돌려 내 코드와 시간·메모리를 비교해 보여줍니다.")
         section(l2, "보관 · 초기화")
         toggle(l2, "keep_solutions", "작성한 풀이 파일 보관",
                "끄면 종료할 때 풀이 코드 파일을 정리해 디스크 용량을 아낍니다.")
@@ -1423,6 +1507,11 @@ class SettingsDialog(QDialog):
               None, "quit",
               data_items=[("프로그램 종료", "quit"), ("트레이로 보내기", "tray"),
                           ("물어보기", "ask")])
+        toggle(l4, "boss_key", "보스 키 (Ctrl+Shift+H)",
+               "다른 프로그램을 쓰는 중에도 Ctrl+Shift+H 를 누르면 즉시 트레이로 숨기고, "
+               "다시 누르면 복원합니다. (재시작 후 적용)")
+        toggle(l4, "update_check", "시작 시 새 버전 확인",
+               "프로그램을 켤 때 GitHub 릴리즈에서 새 버전이 있는지 확인해 알려줍니다.")
         l4.addStretch(1)
 
         # ---- 관리 ----
@@ -1582,6 +1671,11 @@ class MainWindow(QMainWindow):
 
         # 설정 (sqlite)
         self.settings = SettingsDB(SOLUTIONS_DIR / "app.db")
+        # 풀이 시간/제출 통계 (같은 db 파일, 테이블 분리)
+        self.stats = StatsDB(SOLUTIONS_DIR / "app.db")
+        self._timer_pid = None        # 시간 측정 중인 문제 id
+        self._timer_base = 0          # DB에 저장된 누적 초
+        self._timer_pending = 0       # 아직 DB에 안 쓴 초
         # 시작 시 작성 코드·터미널 초기화 — 풀이 코드 폴더만 제거(진행기록·DB는 유지)
         if self.settings.get_bool("reset_on_start"):
             for d in SOLUTIONS_DIR.glob("*"):
@@ -1647,6 +1741,23 @@ class MainWindow(QMainWindow):
         self._set_opacity(op)
         self._native_applied = False
 
+        # 풀이 시간 측정 (1초 틱)
+        self.solve_timer = QTimer(self)
+        self.solve_timer.setInterval(1000)
+        self.solve_timer.timeout.connect(self._tick_solve_timer)
+        self.solve_timer.start()
+
+        # 새 버전 확인 (시작 3초 후 비동기 — 시작 속도에 영향 없음)
+        self._update_info = None
+        self._update_busy = False
+        if self.settings.get_bool("update_check"):
+            QTimer.singleShot(3000, self._start_update_check)
+
+        # 보스 키 (전역 단축키 Ctrl+Shift+H)
+        self._boss_registered = False
+        if self.settings.get_bool("boss_key"):
+            QTimer.singleShot(0, self._register_boss_key)
+
     def closeEvent(self, event):
         # X 버튼: 기본은 종료(컨펌), 설정에 따라 트레이/물어보기
         action = self.settings.get("close_action", "quit") or "quit"
@@ -1680,6 +1791,8 @@ class MainWindow(QMainWindow):
                                     QMessageBox.No) == QMessageBox.Yes
 
     def _do_quit(self, event=None):
+        self._flush_solve_time()            # 마지막 풀이 시간 저장
+        self._unregister_boss_key()
         self._cleanup_solutions()
         if getattr(self, "tray", None) is not None:
             self.tray.hide()
@@ -1816,7 +1929,7 @@ class MainWindow(QMainWindow):
 
     def _tray_hide_mode(self):
         self._show_normal()
-        if self._mode == "lesson":      # Ctrl+H 토글과 동일한 차단(레슨은 하이드 비호환)
+        if self._mode in ("lesson", "stats"):   # Ctrl+H 토글과 동일한 차단
             self._set_status("하이드 모드는 문제/영단어에서만 사용할 수 있어요", ORANGE)
             return
         self._set_hide_mode(True)
@@ -1856,8 +1969,8 @@ class MainWindow(QMainWindow):
             self.tree.setCurrentItem(items[0])      # → on_tree_select 로 로드
 
     def _toggle_hide_mode(self):
-        # 레슨 모드는 하이드 콤보(문제 전용)와 호환되지 않음 — 진입 차단
-        if not self._hidden_mode and self._mode == "lesson":
+        # 레슨/통계 화면은 하이드 레이아웃(문제 전용)과 호환되지 않음 — 진입 차단
+        if not self._hidden_mode and self._mode in ("lesson", "stats"):
             self._set_status("하이드 모드는 문제/영단어에서만 사용할 수 있어요", ORANGE)
             return
         self._set_hide_mode(not self._hidden_mode)
@@ -2076,7 +2189,7 @@ class MainWindow(QMainWindow):
 
         tier = p.tier or RANK_INITIAL.get(p.rank, p.rank)
         meta = " · ".join(str(m) for m in (tier, p.topic) if m)
-        io = "stdin · stdout" if p.type == "stdin" else f"fn {p.func_name}()"
+        io = {"stdin": "stdin · stdout", "sql": "SELECT 쿼리"}.get(p.type, f"fn {p.func_name}()")
         h = [f"<div style='color:{COMMENT}; font-size:11px;'>{esc(meta)} &nbsp;·&nbsp; {esc(io)}"
              f" &nbsp;·&nbsp; ⏱ {p.time_limit_ms}ms &nbsp; 💾 {p.memory_limit_mb}MB</div>"]
         if self._is_locked(p):
@@ -2095,6 +2208,11 @@ class MainWindow(QMainWindow):
                 h.append(pre(ex["input"]))
                 h.append(f"<div style='color:{COMMENT}; font-size:11px;'>out {i}</div>")
                 h.append(pre(ex["output"]))
+            elif p.type == "sql":
+                h.append(f"<div style='color:{COMMENT}; font-size:11px;'>예시 데이터</div>")
+                h.append(pre(ex["input"]))
+                h.append(f"<div style='color:{COMMENT}; font-size:11px;'>조회 결과</div>")
+                h.append(pre(ex["output"]))
             else:
                 args_repr = ", ".join(repr(a) for a in ex["args"])
                 h.append(pre(f"{p.func_name}({args_repr})  ->  {ex['output']!r}"))
@@ -2108,13 +2226,350 @@ class MainWindow(QMainWindow):
                              f" margin-top:6px;'>힌트 {i + 1} · {names[i]}</div>")
                     h.append(f"<div style='color:{FG}; font-size:13px;'>{nl(p.hints[i])}</div>")
         if rv >= 4:
-            sol = {"python": p.reference_py, "java": p.reference_java, "cpp": p.reference_cpp,
-                   "javascript": p.reference_js}.get(self.lang, "")
-            if not sol.strip():
-                sol = p.reference_py
+            if p.type == "sql":
+                sol = p.reference_sql.strip()
+            else:
+                sol = {"python": p.reference_py, "java": p.reference_java, "cpp": p.reference_cpp,
+                       "javascript": p.reference_js}.get(self.lang, "")
+                if not sol.strip():
+                    sol = p.reference_py
             h.append(sec("풀이 · 정답 코드"))
             h.append(pre(sol))
         return "".join(h)
+
+    # ---- 풀이 시간 측정 ----
+    RANK_TARGET_MIN = {"Bronze": 10, "Silver": 20, "Gold": 35, "Platinum": 45}
+
+    def _flush_solve_time(self):
+        """메모리에 쌓인 초를 DB에 기록."""
+        if self._timer_pid and self._timer_pending > 0:
+            self.stats.add_time(self._timer_pid, self._timer_pending)
+            self._timer_base += self._timer_pending
+            self._timer_pending = 0
+
+    def _switch_solve_timer(self, p):
+        """문제 전환 시 타이머 전환 (p=None → 측정 중지)."""
+        self._flush_solve_time()
+        if p is None or not self.settings.get_bool("solve_timer"):
+            self._timer_pid = None
+            if hasattr(self, "time_label"):
+                self.time_label.setText("")
+            return
+        self._timer_pid = p.id
+        self._timer_base = self.stats.get_time(p.id)
+        self._timer_pending = 0
+        self._update_time_label()
+
+    def _tick_solve_timer(self):
+        if (self._timer_pid is None or self._mode != "problem" or not self.current
+                or self.isMinimized() or not self.isVisible()
+                or not self.settings.get_bool("solve_timer")):
+            return
+        self._timer_pending += 1
+        if self._timer_pending >= 15:            # 15초마다 DB 반영(크래시 대비)
+            self._flush_solve_time()
+        self._update_time_label()
+
+    def _update_time_label(self):
+        if not hasattr(self, "time_label") or self.current is None:
+            return
+        total = self._timer_base + self._timer_pending
+        m, s = divmod(int(total), 60)
+        target = self.RANK_TARGET_MIN.get(getattr(self.current, "rank", ""), 30) * 60
+        if self.current.id in self.solved:
+            color = GREEN
+        elif total > target * 2:
+            color = RED
+        elif total > target:
+            color = ORANGE
+        else:
+            color = COMMENT
+        self.time_label.setText(f"⏱ {m:02d}:{s:02d}")
+        self.time_label.setStyleSheet(
+            f"color:{color}; font-size:12px; font-weight:bold; background:transparent;")
+        self.time_label.setToolTip(
+            f"이 문제에 쓴 누적 시간 (목표 {target // 60}분 · 랭크 기준)")
+
+    def _reset_stats(self):
+        if not self._confirm("풀이 시간·제출 통계를 모두 초기화할까요?\n"
+                             "(푼 문제 기록 ✓ 과 작성한 코드는 유지됩니다)"):
+            return
+        self.stats.reset()
+        self._timer_base = 0
+        self._timer_pending = 0
+        if self._timer_pid:
+            self._update_time_label()
+        self._set_status("풀이 통계 초기화됨", CYAN)
+
+    # ---- 내 통계 대시보드 ----
+    def _open_stats(self):
+        self._mode = "stats"
+        self.current = None
+        self._cur_active = None
+        self.current_lesson = None
+        self._switch_solve_timer(None)
+        self._update_lang_buttons_for(None)
+        self._show_code_panel(False)
+        self._show_html(self._stats_html())
+        self._set_status("내 통계 · 약점 분석", CYAN)
+
+    def _stats_html(self):
+        esc = html.escape
+        all_p = self._all_problems
+        coding_p = [p for p in all_p if p.type != "sql"]
+        sql_p = [p for p in all_p if p.type == "sql"]
+
+        total_secs = self.stats.total_seconds()
+        n_sub, n_ac = self.stats.submit_totals()
+        hh, rem = divmod(total_secs, 3600)
+        mm = rem // 60
+
+        # 유형(topic)별 집계
+        by_topic = {}
+        for p in all_p:
+            t = p.topic or "기타"
+            d = by_topic.setdefault(t, {"total": 0, "solved": 0, "probs": []})
+            d["total"] += 1
+            d["solved"] += (p.id in self.solved)
+            d["probs"].append(p)
+        vt = self.stats.verdict_counts_by_topic()
+        id2topic = {p.id: (p.topic or "기타") for p in all_p}
+        avg_t = self.stats.avg_solved_seconds_by(id2topic)
+
+        # 약점 점수: (미해결 비율) + (오답 비율 가중) — 표본 3문제 이상 유형만
+        weak = []
+        for t, d in by_topic.items():
+            if d["total"] < 3:
+                continue
+            rate = d["solved"] / d["total"]
+            v = vt.get(t, {"AC": 0, "FAIL": 0})
+            subs = v["AC"] + v["FAIL"]
+            fail_ratio = v["FAIL"] / subs if subs else 0.0
+            weak.append((t, (1 - rate) * 2 + fail_ratio, rate, fail_ratio))
+        weak.sort(key=lambda x: -x[1])
+
+        # 추천: 약점 상위 유형에서 미해결·잠기지 않은 문제를 쉬운 순으로 3개
+        recs = []
+        for t, _, _, _ in weak:
+            cands = [p for p in by_topic[t]["probs"]
+                     if p.id not in self.solved and not self._is_locked(p)]
+            cands.sort(key=lambda p: (profile.problem_points(p), p.id))
+            for p in cands:
+                if len(recs) < 3 and all(r.id != p.id for r in recs):
+                    recs.append(p)
+            if len(recs) >= 3:
+                break
+
+        def sec(t):
+            return (f"<div style='color:{CYAN}; font-size:14px; font-weight:bold;"
+                    f" margin:16px 0 6px;'>{t}</div>")
+
+        h = [f"<div style='color:{PURPLE}; font-size:19px; font-weight:bold;'>📊 내 통계</div>"]
+        h.append(
+            f"<div style='color:{FG}; font-size:13px; margin-top:8px;'>"
+            f"푼 문제 <b style='color:{GREEN}'>{len(self.solved)}</b> / {len(all_p)}"
+            f" (코딩 {sum(1 for p in coding_p if p.id in self.solved)}/{len(coding_p)}"
+            f" · SQL {sum(1 for p in sql_p if p.id in self.solved)}/{len(sql_p)})"
+            f" &nbsp;·&nbsp; 총 풀이 시간 <b>{hh}시간 {mm}분</b>"
+            f" &nbsp;·&nbsp; 제출 {n_sub}회 (정답률 "
+            f"{(n_ac / n_sub * 100) if n_sub else 0:.0f}%)</div>")
+
+        # 유형별 표 — 해결률 낮은 순
+        rows = sorted(by_topic.items(), key=lambda kv: kv[1]["solved"] / kv[1]["total"])
+        h.append(sec("유형별 현황 (해결률 낮은 순)"))
+        h.append(f"<table style='border-collapse:collapse; font-size:12px;'>"
+                 f"<tr style='color:{COMMENT};'>"
+                 f"<td style='padding:3px 14px 3px 0;'>유형</td>"
+                 f"<td style='padding:3px 14px;'>해결</td>"
+                 f"<td style='padding:3px 14px;'>해결률</td>"
+                 f"<td style='padding:3px 14px;'>제출(오답)</td>"
+                 f"<td style='padding:3px 14px;'>평균 풀이시간</td></tr>")
+        for t, d in rows:
+            rate = d["solved"] / d["total"]
+            v = vt.get(t, {"AC": 0, "FAIL": 0})
+            at = avg_t.get(t)
+            at_txt = f"{int(at // 60)}분 {int(at % 60)}초" if at else "-"
+            rc = GREEN if rate >= 0.7 else (ORANGE if rate >= 0.3 else RED)
+            bar_w = int(rate * 80)
+            h.append(
+                f"<tr><td style='padding:3px 14px 3px 0; color:{FG};'>{esc(t)}</td>"
+                f"<td style='padding:3px 14px; color:{FG};'>{d['solved']}/{d['total']}</td>"
+                f"<td style='padding:3px 14px;'>"
+                f"<span style='color:{rc}; font-weight:bold;'>{rate * 100:.0f}%</span></td>"
+                f"<td style='padding:3px 14px; color:{COMMENT};'>{v['AC'] + v['FAIL']}"
+                f" (<span style='color:{RED};'>{v['FAIL']}</span>)</td>"
+                f"<td style='padding:3px 14px; color:{COMMENT};'>{at_txt}</td></tr>")
+        h.append("</table>")
+
+        if weak:
+            h.append(sec("약점 유형"))
+            names = " · ".join(f"<b style='color:{ORANGE};'>{esc(t)}</b>"
+                               for t, _, _, _ in weak[:3])
+            h.append(f"<div style='color:{FG}; font-size:13px;'>{names}"
+                     f" — 해결률이 낮거나 오답이 잦은 유형이에요.</div>")
+
+        h.append(sec("오늘의 추천 문제"))
+        if recs:
+            for p in recs:
+                tier = p.tier or RANK_INITIAL.get(p.rank, p.rank)
+                h.append(
+                    f"<div style='font-size:13px; margin:3px 0;'>"
+                    f"<a href='problem:{p.id}' style='color:{CYAN};"
+                    f" text-decoration:none;'>▶ [{tier}] {esc(p.title)}</a>"
+                    f" <span style='color:{COMMENT};'>· {esc(p.topic or '')}</span></div>")
+            h.append(f"<div style='color:{COMMENT}; font-size:11px; margin-top:4px;'>"
+                     f"클릭하면 바로 문제로 이동합니다.</div>")
+        else:
+            h.append(f"<div style='color:{COMMENT}; font-size:12px;'>"
+                     f"추천할 문제가 없어요 — 전부 풀었거나 데이터가 부족합니다.</div>")
+        return h
+
+    def _on_prob_anchor(self, url):
+        s = url.toString()
+        if s.startswith("problem:"):
+            self._open_problem_by_id(s.split(":", 1)[1])
+        elif s.startswith(("http://", "https://")):
+            import webbrowser
+            webbrowser.open(s)
+
+    # ---- 보스 키 (전역 단축키) ----
+    BOSS_HOTKEY_ID = 0xB055
+
+    def _register_boss_key(self):
+        """Ctrl+Shift+H 전역 등록 — 다른 앱에 포커스가 있어도 즉시 숨김/복원."""
+        if sys.platform != "win32" or self._boss_registered:
+            return
+        try:
+            import ctypes
+            MOD_CONTROL, MOD_SHIFT = 0x0002, 0x0004
+            ok = ctypes.windll.user32.RegisterHotKey(
+                int(self.winId()), self.BOSS_HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, 0x48)  # H
+            self._boss_registered = bool(ok)
+            if not ok:
+                self._set_status("보스 키(Ctrl+Shift+H) 등록 실패 — 다른 프로그램이 사용 중", ORANGE)
+        except Exception:
+            pass
+
+    def _unregister_boss_key(self):
+        if not self._boss_registered or sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            ctypes.windll.user32.UnregisterHotKey(int(self.winId()), self.BOSS_HOTKEY_ID)
+        except Exception:
+            pass
+        self._boss_registered = False
+
+    def _boss_toggle(self):
+        if self.isVisible() and not self.isMinimized():
+            self.hide()                           # 작업표시줄에서도 사라짐
+            if getattr(self, "tray", None) is not None:
+                self.tray.show()
+        else:
+            self._show_normal()
+
+    def nativeEvent(self, eventType, message):
+        if sys.platform == "win32" and self._boss_registered:
+            try:
+                import ctypes
+                from ctypes import wintypes
+                msg = wintypes.MSG.from_address(int(message))
+                if msg.message == 0x0312 and msg.wParam == self.BOSS_HOTKEY_ID:  # WM_HOTKEY
+                    self._boss_toggle()
+                    return True, 0
+            except Exception:
+                pass
+        return super().nativeEvent(eventType, message)
+
+    # ---- 업데이트 (GitHub 릴리즈) ----
+    def _start_update_check(self, manual=False):
+        self._update_manual = manual
+        th = UpdateCheckThread()
+        th.done.connect(self._on_update_checked)
+        th.finished.connect(lambda t=th: self._threads.remove(t) if t in self._threads else None)
+        self._threads.append(th)
+        th.start()
+        if manual:
+            self._set_status("업데이트 확인 중…", CYAN)
+
+    def _on_update_checked(self, info):
+        manual = getattr(self, "_update_manual", False)
+        if not info:
+            if manual:
+                self._set_status("업데이트 확인 실패 (네트워크)", ORANGE)
+            return
+        if not updater.is_newer(info.get("version", ""), APP_VERSION):
+            if manual:
+                self._set_status(f"현재 최신 버전입니다 (v{APP_VERSION})", GREEN)
+            return
+        self._update_info = info
+        self._set_status(f"새 버전 v{info['version']} — ⚙ 메뉴에서 업데이트", CYAN)
+        if getattr(self, "tray", None) is not None:
+            self.tray.showMessage("code T", f"새 버전 v{info['version']} 이 나왔어요!\n"
+                                  "⚙ 메뉴 → 업데이트로 바로 적용할 수 있습니다.",
+                                  QSystemTrayIcon.Information, 6000)
+        if manual:
+            self._do_update()
+
+    def _do_update(self):
+        info = self._update_info
+        if not info or self._update_busy:
+            return
+        notes = (info.get("notes") or "").strip()
+        if len(notes) > 400:
+            notes = notes[:400] + " …"
+        ok = QMessageBox.question(
+            self, "업데이트",
+            f"v{APP_VERSION} → v{info['version']} 업데이트할까요?\n\n{notes}\n\n"
+            + ("(소스 실행 — git pull 로 갱신합니다)" if updater.can_git_update()
+               else "(다운로드 후 자동으로 재시작하며 적용됩니다)"),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if ok != QMessageBox.Yes:
+            return
+        # 1) 소스 + git 저장소 → git pull
+        if updater.can_git_update():
+            done, out = updater.git_update()
+            tail = out.strip().splitlines()[-1] if out.strip() else ""
+            if done:
+                QMessageBox.information(self, "업데이트",
+                                        f"git pull 완료 — 프로그램을 다시 시작하면 적용됩니다.\n\n{tail}")
+                self._update_info = None
+            else:
+                QMessageBox.warning(self, "업데이트", f"git pull 실패:\n{out[-600:]}")
+            return
+        # 2) 빌드(frozen) → 릴리즈 zip 자동 교체
+        if not updater.is_frozen() or not info.get("zip_url"):
+            import webbrowser
+            webbrowser.open(info.get("page") or "https://github.com/black-astro/coding-test/releases")
+            return
+        self._update_busy = True
+        th = UpdateDownloadThread(info["zip_url"])
+        th.progress.connect(lambda g, t: self._set_status(
+            f"업데이트 다운로드 중… {g // 1048576}MB" + (f"/{t // 1048576}MB" if t else ""), CYAN))
+        th.done.connect(self._on_update_staged)
+        th.finished.connect(lambda t=th: self._threads.remove(t) if t in self._threads else None)
+        self._threads.append(th)
+        th.start()
+
+    def _on_update_staged(self, result):
+        self._update_busy = False
+        if isinstance(result, Exception):
+            self._set_status(f"업데이트 실패: {result}", RED)
+            return
+        ok = QMessageBox.question(
+            self, "업데이트", "다운로드 완료 — 지금 재시작하며 적용할까요?\n"
+            "(풀이 코드와 진행 기록은 그대로 유지됩니다)",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if ok != QMessageBox.Yes:
+            self._set_status("업데이트 보류 — ⚙ 메뉴에서 다시 적용할 수 있어요", ORANGE)
+            return
+        try:
+            updater.apply_and_restart(result)
+        except Exception as e:
+            self._set_status(f"업데이트 적용 실패: {e}", RED)
+            return
+        self._flush_solve_time()
+        self._do_quit()
 
     # ---- 전체 투명도 오버레이 (우측 하단, 상시) ----
     def _build_opacity_overlay(self, parent):
@@ -2388,14 +2843,21 @@ class MainWindow(QMainWindow):
         m = QMenu(self)
         a_set = m.addAction("설정…")
         m.addSeparator()
+        if self._update_info:
+            a_upd = m.addAction(f"🔄 v{self._update_info['version']} 업데이트 설치")
+        else:
+            a_upd = m.addAction("업데이트 확인")
         a_env = m.addAction("환경 점검 (JDK · g++ · Node)")
         a_help = m.addAction("사용법")
         m.addSeparator()
         a_reset = m.addAction("문제 변형 리셋")
         a_tier = m.addAction("내 티어 초기화")
+        a_stat = m.addAction("풀이 통계 초기화 (시간 · 제출 기록)")
         act = m.exec(self.settings_btn.mapToGlobal(self.settings_btn.rect().bottomLeft()))
         if act == a_set:
             self._open_settings()
+        elif act == a_upd:
+            self._do_update() if self._update_info else self._start_update_check(manual=True)
         elif act == a_env:
             self._env_check()
         elif act == a_help:
@@ -2404,6 +2866,8 @@ class MainWindow(QMainWindow):
             self._on_reset()
         elif act == a_tier:
             self._reset_tier()
+        elif act == a_stat:
+            self._reset_stats()
 
     def _open_help(self):
         HelpDialog(self).exec()
@@ -2625,6 +3089,8 @@ class MainWindow(QMainWindow):
         self.content.addWidget(self.prob_view)
         self.prob = QTextBrowser()
         self.prob.setOpenExternalLinks(False)
+        self.prob.setOpenLinks(False)                       # 링크는 직접 처리(문제 이동 등)
+        self.prob.anchorClicked.connect(self._on_prob_anchor)
         self.prob.setContextMenuPolicy(Qt.CustomContextMenu)
         self.prob.customContextMenuRequested.connect(
             lambda pos: self._prob_menu(pos, self.prob))
@@ -2653,6 +3119,9 @@ class MainWindow(QMainWindow):
         ehead.addSpacing(10)
         ehead.addWidget(self.file_label)
         ehead.addStretch(1)
+        self.time_label = QLabel("")          # 풀이 시간 ⏱ mm:ss (랭크 목표 초과 시 색 변경)
+        ehead.addWidget(self.time_label)
+        ehead.addSpacing(10)
         ehead.addWidget(self.status)
         el.addLayout(ehead)
         self.editor = CodeEditor()
@@ -2805,6 +3274,14 @@ class MainWindow(QMainWindow):
                 pit.setIcon(0, self._ic_file)
             self.item_exam[id(pit)] = preset
 
+        # 6.5) 내 통계 (단일 항목 — 클릭 시 대시보드)
+        st = QTreeWidgetItem(self.tree, ["📊 내 통계"])
+        f = st.font(0)
+        f.setBold(True)
+        st.setFont(0, f)
+        st.setForeground(0, QColor(PURPLE))
+        self._stats_item = st
+
         # 6) 가이드
         if lessons.GUIDES:
             gd = self._group_item(self.tree, "가이드", top=True)
@@ -2942,6 +3419,9 @@ class MainWindow(QMainWindow):
             self._save_editor()
         self.next_btn.setVisible(False)
         self._cur_item = cur
+        if cur is getattr(self, "_stats_item", None):
+            self._open_stats()
+            return
         preset = self.item_exam.get(id(cur))
         if preset is not None:
             self._start_exam(preset)
@@ -2967,6 +3447,7 @@ class MainWindow(QMainWindow):
         if self._hidden_mode:
             self._apply_hide_visibility()       # 문제 모드: 설명 숨기고 코딩+터미널
         self._update_lang_buttons_for(p)        # func 문제면 Python 외 언어 잠금
+        self._switch_solve_timer(p)             # 풀이 시간 측정 전환
         self._render_problem(self._cur_active)
         self._load_editor()
         self._prefill_stdin(self._cur_active)
@@ -3013,11 +3494,21 @@ class MainWindow(QMainWindow):
         for code, b in self.lang_buttons.items():
             b.setChecked(code == self.lang)
 
+    def _active_lang(self, p=None):
+        """실제 채점/편집에 쓰는 언어 — SQL 문제는 언어 버튼과 무관하게 'sql'."""
+        p = p or (self._cur_active or self.current)
+        return "sql" if getattr(p, "type", "") == "sql" else self.lang
+
     def _update_lang_buttons_for(self, p):
-        """함수 구현형(func) 문제는 Python 전용 — 다른 언어 버튼을 잠가 헛수고를 막는다.
+        """함수 구현형(func)은 Python 전용, SQL 문제는 언어 버튼 전체 잠금.
         (레슨의 전체 잠금 등 이전 모드 상태도 여기서 복구)"""
-        is_func = getattr(p, "type", "") == "func"
+        ptype = getattr(p, "type", "")
+        is_func, is_sql = ptype == "func", ptype == "sql"
         for code, b in self.lang_buttons.items():
+            if is_sql:
+                b.setEnabled(False)
+                b.setToolTip("SQL 문제 — 에디터에 SELECT 쿼리를 작성해 제출하세요")
+                continue
             if code == "python":
                 b.setEnabled(True)          # 이전 모드(레슨 등)에서 잠긴 상태 복구
                 b.setToolTip("")
@@ -3030,6 +3521,7 @@ class MainWindow(QMainWindow):
 
     def _open_lesson(self, les):
         self._mode = "lesson"
+        self._switch_solve_timer(None)      # 문제 풀이 시간 측정 중지
         self.current_lesson = les
         self.current = None
         self._cur_active = None
@@ -3241,6 +3733,7 @@ class MainWindow(QMainWindow):
 
     def _open_vocab(self, entry):
         self._mode = "vocab"
+        self._switch_solve_timer(None)      # 문제 풀이 시간 측정 중지
         self.vocab_entry = entry
         self.vocab_level = entry["level"]
         self.vocab_words = entry["words"]
@@ -3493,6 +3986,10 @@ class MainWindow(QMainWindow):
         return SOLUTIONS_DIR / p.id / runner.LANGUAGES[lang]["filename"]
 
     def _template(self, p, lang):
+        if getattr(p, "type", "") == "sql" or lang == "sql":
+            return ("-- 문제의 조건에 맞는 SELECT 쿼리를 작성하세요.\n"
+                    "-- 정렬(ORDER BY) 조건까지 지문 그대로 맞춰야 정답입니다.\n"
+                    "SELECT \n")
         if lang == "python":
             return p.template_py or "def solution():\n    pass\n"
         if lang == "java":
@@ -3517,15 +4014,16 @@ class MainWindow(QMainWindow):
 
     def _load_editor(self):
         p = self.current
-        path = self._sol_path(p, self.lang)
+        lang = self._active_lang(p)
+        path = self._sol_path(p, lang)
         try:
             code = (path.read_text(encoding="utf-8", errors="replace")
-                    if path.exists() else self._template(p, self.lang))
+                    if path.exists() else self._template(p, lang))
         except OSError:
-            code = self._template(p, self.lang)
-        self.editor.set_code(code, self.lang)
-        self.file_label.setText(runner.LANGUAGES[self.lang]["filename"])
-        if p.type == "func" and self.lang != "python":
+            code = self._template(p, lang)
+        self.editor.set_code(code, lang)
+        self.file_label.setText(runner.LANGUAGES[lang]["filename"])
+        if p.type == "func" and lang != "python":
             self._set_status("fn: python only", ORANGE)
         else:
             self._set_status("ready", COMMENT)
@@ -3534,12 +4032,13 @@ class MainWindow(QMainWindow):
         if not self.current:
             return
         try:
-            path = self._sol_path(self.current, self.lang)
+            lang = self._active_lang(self.current)
+            path = self._sol_path(self.current, lang)
             text = self.editor.toPlainText()
             # 손대지 않은 템플릿 그대로면 폴더/파일을 만들지 않는다
             # (문제를 구경만 해도 solutions/ 에 폴더가 쌓이는 문제 방지)
             if not force and not path.exists() \
-                    and text == self._template(self.current, self.lang):
+                    and text == self._template(self.current, lang):
                 return
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
@@ -3596,8 +4095,8 @@ class MainWindow(QMainWindow):
 
         # 위장: 랭크 이니셜/티어 + 주제만. 출처(style)·BOJ·'코딩테스트' 단어 제거
         meta = [m for m in (p.tier or RANK_INITIAL.get(p.rank, p.rank), p.topic) if m]
-        io = "stdin · stdout" if p.type == "stdin" else f"fn {p.func_name}()"
-        langs = "py · java · cpp · js" if p.type == "stdin" else "py"
+        io = {"stdin": "stdin · stdout", "sql": "SELECT 쿼리"}.get(p.type, f"fn {p.func_name}()")
+        langs = {"stdin": "py · java · cpp · js", "sql": "sqlite"}.get(p.type, "py")
 
         def section(title):
             v.add(make_label(title, CYAN, 13, bold=True), top=10)
@@ -3642,6 +4141,11 @@ class MainWindow(QMainWindow):
                 v.add(make_codebox(ex["input"]))
                 v.add(make_label(f"out {i}", COMMENT, 11))
                 v.add(make_codebox(ex["output"]))
+            elif p.type == "sql":
+                v.add(make_label("예시 데이터", COMMENT, 11))
+                v.add(make_codebox(ex["input"]))
+                v.add(make_label("조회 결과 (행: 컬럼값을 | 로 구분)", COMMENT, 11))
+                v.add(make_codebox(ex["output"]))
             else:
                 args_repr = ", ".join(repr(a) for a in ex["args"])
                 v.add(make_codebox(f"{p.func_name}({args_repr})  ->  {ex['output']!r}"))
@@ -3656,16 +4160,20 @@ class MainWindow(QMainWindow):
                     v.add(make_label(f"힌트 {i+1} · {names[i]}", PURPLE, 13, bold=True), top=6)
                     v.add(make_label(p.hints[i], FG, 13))
         if rv >= 4:
-            lang = self.lang
-            sol = {"python": p.reference_py, "java": p.reference_java, "cpp": p.reference_cpp,
-                   "javascript": p.reference_js}.get(lang, "")
-            if not sol.strip():
-                lang, sol = "python", p.reference_py
-            section("풀이 · 정답 코드")
-            v.add(make_label(f"힌트 1→2→3이 ‘접근 → 알고리즘 → 핵심 구현’ 풀이이고, "
-                             f"아래가 가장 정석적인 정답 코드입니다 ({runner.LANGUAGES[lang]['name']}).",
-                             COMMENT, 11))
-            v.add(make_codebox(sol))
+            if p.type == "sql":
+                section("풀이 · 정답 쿼리")
+                v.add(make_codebox(p.reference_sql.strip()))
+            else:
+                lang = self.lang
+                sol = {"python": p.reference_py, "java": p.reference_java, "cpp": p.reference_cpp,
+                       "javascript": p.reference_js}.get(lang, "")
+                if not sol.strip():
+                    lang, sol = "python", p.reference_py
+                section("풀이 · 정답 코드")
+                v.add(make_label(f"힌트 1→2→3이 ‘접근 → 알고리즘 → 핵심 구현’ 풀이이고, "
+                                 f"아래가 가장 정석적인 정답 코드입니다 ({runner.LANGUAGES[lang]['name']}).",
+                                 COMMENT, 11))
+                v.add(make_codebox(sol))
 
     # 출력
     def _append(self, text, color=FG, bold=False):
@@ -3782,11 +4290,14 @@ class MainWindow(QMainWindow):
             return
         p = self.current
         lang = self.lang
-        refmap = {"python": p.reference_py, "java": p.reference_java,
-                  "cpp": p.reference_cpp, "javascript": p.reference_js}
-        code = refmap.get(lang, "")
-        if not code.strip():                      # 현재 언어 정답이 없으면 정석(파이썬) 코드로
-            lang, code = "python", p.reference_py
+        if p.type == "sql":
+            lang, code = "sql", p.reference_sql
+        else:
+            refmap = {"python": p.reference_py, "java": p.reference_java,
+                      "cpp": p.reference_cpp, "javascript": p.reference_js}
+            code = refmap.get(lang, "")
+            if not code.strip():                  # 현재 언어 정답이 없으면 정석(파이썬) 코드로
+                lang, code = "python", p.reference_py
         dlg = QMainWindow(self)
         dlg.setWindowTitle(f"hint last · {p.title}")
         dlg.resize(800, 660)
@@ -3823,7 +4334,7 @@ class MainWindow(QMainWindow):
             return
         if self._blocked_locked(self.current):
             return
-        p, lang = (self._cur_active or self.current), self.lang
+        p, lang = (self._cur_active or self.current), self._active_lang()
         if not runner.compiler_available(lang):
             self.out.clear()
             self._append(f"{runner.LANGUAGES[lang]['name']} 실행기가 없습니다. (가이드의 설치 안내 참고)\n", ORANGE)
@@ -3835,6 +4346,16 @@ class MainWindow(QMainWindow):
         self._append(f"$ run {runner.LANGUAGES[lang]['name']}   (실행만 · 채점 아님)\n", CYAN)
         self._set_status("running…", YELLOW)
         self.run_btn.setEnabled(False)
+        if p.type == "sql":
+            # SQL: 예제 데이터셋(1번)에 내 쿼리를 실행해 결과만 확인
+            setup = p.testcases[0]["input"] if p.testcases else ""
+            self._append("  (예제 데이터셋 1에 실행)\n", COMMENT)
+            th = SqlRunThread(setup, self.editor.toPlainText())
+            th.done.connect(self._on_sql_run_done)
+            th.finished.connect(lambda t=th: self._threads.remove(t) if t in self._threads else None)
+            self._threads.append(th)
+            th.start()
+            return
         if p.type == "func":
             # 함수형: 입력칸에 쓴 인자로 호출 — 비어 있으면 첫 예제 인자 사용
             import json
@@ -3870,6 +4391,20 @@ class MainWindow(QMainWindow):
         self._threads.append(th)
         th.start()
 
+    def _on_sql_run_done(self, payload):
+        self.run_btn.setEnabled(True)
+        kind, data = payload
+        if kind == "ERR":
+            self._append("  " + str(data) + "\n", RED)
+            self._set_status("error", RED)
+            return
+        text, cols = data
+        if cols:
+            self._append("  " + " | ".join(cols) + "\n", CYAN)
+        self._append((text + "\n") if text else "  (결과 0행)\n", FG)
+        self._append("\n  → 정답 판정을 받으려면 상단 '제출' (Ctrl+Enter)\n", CYAN)
+        self._set_status("done", GREEN)
+
     def on_submit(self):
         """제출 — 문제의 테스트케이스로 채점해 정답/오답 판정."""
         if not self.submit_btn.isEnabled():    # 단축키(Ctrl+Enter) 연타로 인한 중복 채점 방지
@@ -3879,7 +4414,7 @@ class MainWindow(QMainWindow):
             return
         if self._blocked_locked(self.current):
             return
-        p, lang = (self._cur_active or self.current), self.lang
+        p, lang = (self._cur_active or self.current), self._active_lang()
         if p.type == "func" and lang != "python":
             self.out.clear()
             self._append("※ 함수 구현형 문제는 Python으로만 채점됩니다.\n", ORANGE)
@@ -3891,10 +4426,13 @@ class MainWindow(QMainWindow):
         self._save_editor(force=True)      # 채점에는 파일이 필요
         path = self._sol_path(p, lang)
         self.next_btn.setVisible(False)
-        eff_tl, eff_ml = effective_limits(p, lang)
         self.out.clear()
-        self._append(f"$ submit {runner.LANGUAGES[lang]['name']}   "
-                     f"limit  ⏱ {eff_tl}ms · 💾 {eff_ml}MB\n", CYAN)
+        if p.type == "sql":
+            self._append("$ submit SQL   (조회 결과 · 정렬 순서까지 일치해야 정답)\n", CYAN)
+        else:
+            eff_tl, eff_ml = effective_limits(p, lang)
+            self._append(f"$ submit {runner.LANGUAGES[lang]['name']}   "
+                         f"limit  ⏱ {eff_tl}ms · 💾 {eff_ml}MB\n", CYAN)
         self._set_status("채점 중…", YELLOW)
         self.submit_btn.setEnabled(False)
         th = JudgeThread(p, lang, path)
@@ -3940,7 +4478,11 @@ class MainWindow(QMainWindow):
             self._append("\n✗ BUILD ERR\n", RED, bold=True)
             self._append(res.compile_error + "\n", RED)
             self._set_status("build err", RED)
+            self.stats.record_submit(p.id, p.topic, lang, "CE")
             return
+        # 제출 이력 기록 (유형별 정답률 통계용)
+        overall = "AC" if res.accepted else (res.first_fail.verdict if res.first_fail else "WA")
+        self.stats.record_submit(p.id, p.topic, lang, overall, res.max_time_ms, res.max_mem_kb)
 
         def memstr(kb):
             if kb is None:
@@ -3970,6 +4512,10 @@ class MainWindow(QMainWindow):
             self._append(f"  ✓ all passed   {res.passed}/{res.total}\n", GREEN, bold=True)
             self._append(f"  peak  ⏱ {res.max_time_ms:.0f}ms · 💾 {memstr(res.max_mem_kb)}\n", COMMENT)
             self._set_status("passed", GREEN)
+            # 풀이 시간 확정 기록(첫 정답 기준) + ⏱ 라벨 초록으로
+            self._flush_solve_time()
+            if self._timer_pid == p.id and self._timer_base > 0:
+                self.stats.mark_solved(p.id, self._timer_base)
             in_exam = bool(self.exam and p.id in self.exam["ids"])
             # 시험 중 정답은 설정에 따라 영구 기록 반영 여부 선택
             if p.id not in self.solved and (not in_exam or self.settings.get_bool("exam_to_progress")):
@@ -3993,9 +4539,61 @@ class MainWindow(QMainWindow):
                     QTimer.singleShot(1500, self._next_problem)
                 else:
                     self._append("  → 상단 '다음 문제' 로 이어서 풀 수 있어요.\n", CYAN)
+            self._start_efficiency_compare(p, lang, res, in_exam)
         else:
             self._append(f"  ✗ failed   {res.passed}/{res.total}\n", RED, bold=True)
             self._set_status(f"failed {res.passed}/{res.total}", RED)
+        if self._timer_pid == p.id:
+            self._update_time_label()
+
+    # ---- 효율성 비교 (내 코드 vs 정답 코드) ----
+    def _start_efficiency_compare(self, p, lang, res, in_exam):
+        """정답 시 정답 코드를 같은 케이스로 돌려 시간/메모리 비교(백그라운드)."""
+        if in_exam or p.type == "sql" or not self.settings.get_bool("efficiency_compare"):
+            return
+        ref_lang = lang if p.type == "stdin" else "python"
+        ref_map = {"python": p.reference_py, "java": p.reference_java,
+                   "cpp": p.reference_cpp, "javascript": p.reference_js}
+        ref_code = (ref_map.get(ref_lang) or "").strip()
+        if not ref_code:
+            ref_lang, ref_code = "python", (p.reference_py or "").strip()
+        if not ref_code or not runner.compiler_available(ref_lang):
+            return
+        self._append("  ⚡ 정답 코드와 효율성 비교 중…\n", COMMENT)
+        th = EffThread(p, ref_lang, ref_code)
+        th._user = (res.max_time_ms, res.max_mem_kb, lang)
+        th.done.connect(lambda r, t=th: self._on_eff_done(t, r))
+        th.finished.connect(lambda t=th: self._threads.remove(t) if t in self._threads else None)
+        self._threads.append(th)
+        th.start()
+
+    def _on_eff_done(self, th, result):
+        def memstr(kb):
+            if kb is None:
+                return "-"
+            return f"{kb/1024:.1f}MB" if kb >= 1024 else f"{kb}KB"
+        if isinstance(result, Exception):
+            self._append(f"  ⚡ 효율성 비교 실패: {result}\n", COMMENT)
+            return
+        res_ref, ref_lang = result
+        if not res_ref.accepted:
+            self._append("  ⚡ (정답 코드 재채점 실패 — 비교 생략)\n", COMMENT)
+            return
+        ut, um, ulang = th._user
+        rt, rm = res_ref.max_time_ms, res_ref.max_mem_kb
+        self._append(f"  ⚡ 효율성  내 코드({runner.LANGUAGES[ulang]['name']}) "
+                     f"⏱ {ut:.0f}ms · 💾 {memstr(um)}   |   "
+                     f"정답({runner.LANGUAGES[ref_lang]['name']}) "
+                     f"⏱ {rt:.0f}ms · 💾 {memstr(rm)}\n", CYAN)
+        if rt and rt > 0 and ulang == ref_lang:
+            ratio = ut / rt
+            if ratio >= 2.0:
+                self._append(f"     내 코드가 정답보다 {ratio:.1f}배 느려요 — "
+                             f"더 효율적인 알고리즘/자료구조를 고민해 보세요. (효율성 테스트 대비)\n", ORANGE)
+            elif ratio <= 1.1:
+                self._append("     정답 코드 수준으로 빠릅니다 👍\n", GREEN)
+            else:
+                self._append(f"     정답 대비 {ratio:.1f}배 — 준수한 수준이에요.\n", COMMENT)
 
 
 def _run_as_python():
