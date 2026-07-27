@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QFrame, QLabe
                                QStyledItemDelegate, QStyleOptionViewItem, QGraphicsBlurEffect,
                                QTabWidget, QListWidget, QListWidgetItem)
 
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.3.0"
 
 # Run(실행만) 안전 제한 — 무한 루프/메모리 폭주 시 강제 종료
 RUN_TIMEOUT_S = 10        # 실행 시간 한도(초)
@@ -100,6 +100,7 @@ def app_icon():
 import problems
 import practice
 import lessons
+import datasci
 import vocab
 from vocab.progress import VocabDB
 from engine.settings import SettingsDB
@@ -1648,7 +1649,10 @@ class MainWindow(QMainWindow):
             self._ic_right = self._ic_down = self._ic_file = self._ic_done = None
 
         # 점수/랭크 계산용 전체 문제 목록(랭크 + 실전)
+        #  데이터분석 트랙은 코딩테스트 랭크·시험과 성격이 달라 여기에 넣지 않는다.
+        #  (랭크 점수·종목 분류·모의고사 출제에서 제외 — 트리 갱신용으로만 따로 들고 있는다)
         self._all_problems = list(problems.BY_ID.values()) + list(practice.BY_ID.values())
+        self._ds_problems = list(datasci.ALL_PROBLEMS)
         self._unlocked_index = 0      # 해금된 최고 랭크(0=Bronze) — 상위는 잠김
 
         # 문제 변형(리셋) 상태
@@ -2368,15 +2372,28 @@ class MainWindow(QMainWindow):
             return (f"<div style='color:{CYAN}; font-size:14px; font-weight:bold;"
                     f" margin:16px 0 6px;'>{t}</div>")
 
+        # 코딩테스트 트랙(랭크+실전+SQL)만 분자에 센다.
+        #  데이터분석 트랙은 별도 트랙이라 self.solved 에 섞여 있어도 여기서 제외하고,
+        #  아래에 따로 한 줄로 보여준다. (안 그러면 분자가 분모를 넘는다)
+        ranked_solved = sum(1 for p in all_p if p.id in self.solved)
+        ds_total = len(self._ds_problems)
+        ds_solved = sum(1 for p in self._ds_problems if p.id in self.solved)
+
         h = [f"<div style='color:{PURPLE}; font-size:19px; font-weight:bold;'>📊 내 통계</div>"]
         h.append(
             f"<div style='color:{FG}; font-size:13px; margin-top:8px;'>"
-            f"푼 문제 <b style='color:{GREEN}'>{len(self.solved)}</b> / {len(all_p)}"
+            f"푼 문제 <b style='color:{GREEN}'>{ranked_solved}</b> / {len(all_p)}"
             f" (코딩 {sum(1 for p in coding_p if p.id in self.solved)}/{len(coding_p)}"
             f" · SQL {sum(1 for p in sql_p if p.id in self.solved)}/{len(sql_p)})"
             f" &nbsp;·&nbsp; 총 풀이 시간 <b>{hh}시간 {mm}분</b>"
             f" &nbsp;·&nbsp; 제출 {n_sub}회 (정답률 "
             f"{(n_ac / n_sub * 100) if n_sub else 0:.0f}%)</div>")
+        if ds_total:
+            h.append(
+                f"<div style='color:{COMMENT}; font-size:12px; margin-top:3px;'>"
+                f"📈 데이터분석 트랙(별도) 연습문제 "
+                f"<b style='color:{GREEN}'>{ds_solved}</b> / {ds_total} "
+                f"— 랭크·게이지에는 반영되지 않습니다</div>")
 
         # 유형별 표 — 해결률 낮은 순
         rows = sorted(by_topic.items(), key=lambda kv: kv[1]["solved"] / kv[1]["total"])
@@ -2908,7 +2925,7 @@ class MainWindow(QMainWindow):
         self.solved.clear()
         self._save_progress()
         for pid in ids:
-            p = problems.BY_ID.get(pid) or practice.BY_ID.get(pid)
+            p = self._lookup_problem(pid)
             if p:
                 self._refresh_item(p)
         self._update_profile()
@@ -2978,7 +2995,7 @@ class MainWindow(QMainWindow):
             d = SOLUTIONS_DIR / pid
             if d.exists():
                 shutil.rmtree(d, ignore_errors=True)
-            pobj = problems.BY_ID.get(pid) or practice.BY_ID.get(pid)
+            pobj = self._lookup_problem(pid)
             if pobj:
                 self._refresh_item(pobj)
         self._save_progress()
@@ -3239,6 +3256,27 @@ class MainWindow(QMainWindow):
                 for les in items:
                     self._add_lesson(lvnode, les)
 
+        # 1.5) 데이터분석 — Python 전용 학습 트랙 (기초 → 통계 → ML → 딥러닝 → LLM)
+        #      코딩테스트 트랙과 성격이 달라 랭크/종목/시험에는 섞이지 않는다.
+        if datasci.total():
+            ds = self._group_item(self.tree, "데이터분석", top=True)
+            for stage in datasci.STAGES:
+                les_list = datasci.LESSONS[stage]
+                prob_list = datasci.PROBLEMS[stage]
+                if not les_list and not prob_list:
+                    continue
+                label = f"{stage} (강의 {len(les_list)}"
+                label += f" · 문제 {len(prob_list)})" if prob_list else ")"
+                snode = self._group_item(ds, label)
+                if les_list:
+                    lnode = self._group_item(snode, f"📖 강의 ({len(les_list)})")
+                    for les in les_list:
+                        self._add_lesson(lnode, les)
+                if prob_list:
+                    pnode = self._group_item(snode, f"✏️ 연습문제 ({len(prob_list)})")
+                    for p in prob_list:
+                        self._add_problem(pnode, p)
+
         # 2) 랭크 (랭크별 문제 — 실전 문제도 난이도에 맞게 포함 · SQL 은 전용 섹션으로 분리)
         rk = self._group_item(self.tree, "랭크", top=True)
         rank_groups = {r: [] for r in problems.RANKS}
@@ -3382,6 +3420,14 @@ class MainWindow(QMainWindow):
     def _refresh_all_items(self):
         for p in self._all_problems:
             self._refresh_item(p)
+        for p in self._ds_problems:
+            self._refresh_item(p)
+
+    def _lookup_problem(self, pid):
+        """id 로 문제 객체를 찾는다 — 랭크/실전 + 데이터분석 트랙 모두 조회.
+        (self.solved 에는 세 트랙의 id 가 섞여 들어가므로 세 곳을 다 봐야 한다)"""
+        return (problems.BY_ID.get(pid) or practice.BY_ID.get(pid)
+                or datasci.BY_ID.get(pid))
 
     def _blocked_locked(self, p):
         """잠긴(상위 랭크) 문제면 안내 후 True. 풀 수 있으면 False."""
@@ -3480,6 +3526,8 @@ class MainWindow(QMainWindow):
         self._load_editor()
         self._prefill_stdin(self._cur_active)
         self.out.clear()
+        if p.id in datasci.BY_ID:
+            self._warn_ds_deps()
 
     def _next_sibling_problem(self):
         it = getattr(self, "_cur_item", None)
@@ -3572,6 +3620,16 @@ class MainWindow(QMainWindow):
             self._set_status("가이드 · 읽기", COMMENT)
         else:
             self._set_status("학습 · Run 으로 실행", CYAN)
+        if les.lang == "datasci":
+            self._warn_ds_deps()
+
+    def _warn_ds_deps(self):
+        """데이터분석 트랙에 필요한 numpy/pandas 가 없으면 터미널에 설치 안내."""
+        miss = datasci.missing_deps()
+        if not miss:
+            return
+        self._append(f"⚠ 데이터분석 트랙에 필요한 패키지가 없어요: {', '.join(miss)}\n", ORANGE)
+        self._append(f"  터미널에서 설치하세요:  python -m pip install {' '.join(miss)}\n", COMMENT)
 
     def _render_lesson(self, l):
         def esc(s):
@@ -3580,7 +3638,8 @@ class MainWindow(QMainWindow):
         def sec(t):
             return f"<div style='color:{CYAN};font-size:13px;font-weight:bold;margin:14px 0 4px;'>{t}</div>"
 
-        kr = {"python": "Python", "java": "Java", "cpp": "C++", "guide": "가이드"}.get(l.lang, l.lang)
+        kr = {"python": "Python", "java": "Java", "cpp": "C++", "guide": "가이드",
+              "datasci": "데이터분석 · Python"}.get(l.lang, l.lang)
         h = [f"<div style='font-family:Segoe UI;color:{FG};font-size:13px;line-height:1.6;'>"]
         h.append(f"<div style='color:{PURPLE};font-size:18px;font-weight:bold;'>{esc(l.title)}</div>")
         h.append(f"<div style='color:{COMMENT};font-size:11px;margin-top:3px;'>{kr} · {esc(l.level)}</div>")
@@ -3596,7 +3655,7 @@ class MainWindow(QMainWindow):
                      f"border:1px solid {BORDER};border-radius:6px;"
                      f"font-family:{MONO_FAMILY};font-size:12px;white-space:pre-wrap;'>"
                      f"{html.escape(l.code.rstrip())}</pre>")
-            if l.lang in ("python", "java", "cpp"):
+            if l.lang in ("python", "java", "cpp", "datasci"):
                 h.append(f"<div style='color:{COMMENT};font-size:11px;margin-top:4px;'>"
                          f"→ 아래 console 에 코드가 올라가 있어요. Run(F5) 으로 직접 실행해 보세요.</div>")
         # 상세 설명은 최하단에 배치 — 더 알고 싶은 사람만 스크롤해서 읽도록
@@ -4555,7 +4614,12 @@ class MainWindow(QMainWindow):
                 self.exam["solved"].add(p.id)
                 self._tick_exam()
             info = getattr(self, "_profile_info", None)
-            if info and info.get("rank") and p.rank in profile.RANK_ORDER:
+            is_datasci = p.id in datasci.BY_ID
+            if is_datasci:
+                # 데이터분석은 별도 학습 트랙 — 코딩테스트 랭크/게이지와 무관하다.
+                self._append("  ℹ 데이터분석 트랙 문제예요. 랭크·게이지에는 반영되지 않지만\n"
+                             "    진행 기록에는 저장됩니다.\n", CYAN)
+            elif info and info.get("rank") and p.rank in profile.RANK_ORDER:
                 if profile.RANK_ORDER.index(p.rank) < profile.RANK_ORDER.index(info["rank"]):
                     self._append(f"  ℹ 현재 티어({info['code']})보다 쉬운 난이도라 랭크 게이지는 오르지 않아요.\n"
                                  f"    더 높은 난이도 문제를 풀어야 게이지가 상승합니다.\n", ORANGE)

@@ -31,9 +31,15 @@ def main():
         "--collect-submodules", "problems",   # 동적 import 되는 문제/레슨/단어 모듈 모두 포함
         "--collect-submodules", "practice",
         "--collect-submodules", "lessons",
+        "--collect-submodules", "datasci",
         "--collect-submodules", "vocab",
         "--collect-all", "qtawesome",         # 아이콘 폰트 데이터
         "--collect-all", "sass",              # libsass 바이너리(SCSS 컴파일)
+        # 데이터분석 트랙 채점용 — frozen exe 는 자기 자신(--exec-py)으로 채점하므로
+        # numpy/pandas 를 앱에 번들해야 데이터분석 문제 채점·레슨 실행이 동작한다.
+        # (앱이 지연 import 라 PyInstaller 가 자동 감지하지 못함 → 명시적 수집 필수)
+        "--collect-all", "numpy",
+        "--collect-all", "pandas",
         "--add-data", f"{ROOT / 'engine' / '_func_harness.py'}{SEP}engine",
         "--add-data", f"{ROOT / 'img'}{SEP}img",   # 로고/아이콘 리소스
         "--icon", str(ROOT / "img" / "app.ico"),   # exe 아이콘

@@ -16,6 +16,7 @@ import tempfile
 
 import problems
 import practice
+import datasci
 from engine.judge import judge as judge_problem
 
 fail = 0
@@ -56,6 +57,29 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
             elif res.unsupported or res.compile_error:
                 print(f"        ↳ {res.unsupported or res.compile_error}")
 
+    # 데이터분석 트랙 — numpy/pandas 가 있을 때만 검증(없으면 건너뛴다)
+    _miss = datasci.missing_deps()
+    if _miss and datasci.ALL_PROBLEMS:
+        print(f"[SKIP] 데이터분석 문제 {len(datasci.ALL_PROBLEMS)}개 "
+              f"— {', '.join(_miss)} 미설치")
+    else:
+        for p in datasci.ALL_PROBLEMS:
+            total += 1
+            path = TMP / f"{p.id}.py"
+            path.write_text(p.reference_py, encoding="utf-8")
+            res = judge_problem(p, path)
+            status = "OK " if res.accepted else "FAIL"
+            if not res.accepted:
+                fail += 1
+            print(f"[{status}] {p.id:<14} {p.title:<28} {res.passed}/{res.total}")
+            if not res.accepted:
+                fc = res.first_fail
+                if fc:
+                    print(f"        ↳ 입력={fc.given_input!r} 기대={fc.expected!r} 실제={fc.actual!r} 에러={fc.error!r}")
+                elif res.unsupported or res.compile_error:
+                    print(f"        ↳ {res.unsupported or res.compile_error}")
+
 print("-" * 60)
 print(f"총 {total}문제 중 통과 {total - fail}, 실패 {fail}")
+print("데이터분석 강의 코드 검증은 `python tools/verify_datasci.py` 로 따로 실행합니다.")
 sys.exit(1 if fail else 0)

@@ -34,7 +34,25 @@ python build.py
    **"Windows embeddable package (64-bit)"** 다운로드 (약 10MB).
 2. 압축을 풀어 `dist/codeT/runtime/python/` 에 넣는다.
    (`dist/codeT/runtime/python/python.exe` 가 있어야 함)
-3. 표준 라이브러리만 쓰면 추가 설정 불필요. (문제 풀이는 stdlib 만 사용)
+3. 코딩테스트 문제는 표준 라이브러리만 쓰므로 여기까지면 채점이 동작한다.
+
+### 3-1) 데이터분석 트랙용 numpy/pandas (선택 — 이 트랙을 쓸 때만 필수)
+
+`데이터분석` 섹션의 강의·연습문제는 numpy/pandas 를 쓴다.
+embeddable package 에는 pip 이 없으므로 아래 순서로 넣는다.
+
+```bash
+# dist/codeT/runtime/python/ 에서
+# 1) python313._pth 파일을 열어 '#import site' 의 주석(#)을 제거한다  ← 이걸 빼먹으면 설치해도 import 안 됨
+# 2) get-pip 설치
+curl -O https://bootstrap.pypa.io/get-pip.py
+.\python.exe get-pip.py
+# 3) 패키지 설치
+.\python.exe -m pip install numpy pandas
+```
+
+용량이 약 100MB 늘어난다. 데이터분석 트랙을 배포하지 않을 거면 생략해도 되며,
+그 경우 해당 강의를 열면 앱이 설치 안내 문구를 띄운다.
 
 ## 3) Java 채점기 넣기 (선택)
 
